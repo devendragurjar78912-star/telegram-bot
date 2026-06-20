@@ -65,7 +65,7 @@ context: ContextTypes.DEFAULT_TYPE):
 
 stop_requests[user_id] = False
 
-        chunk_size = int(
+chunk_size = int(
             update.message.text.replace("/spl", "")
         )
 
