@@ -26,14 +26,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-stop_requests[user_id] = True
+
+    stop_requests[user_id] = True
 
     await update.message.reply_text(
         "⛔ Process stopped successfully."
     )
 
 
-async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_txt(update: Update,
+context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
 file = await update.message.document.get_file()
