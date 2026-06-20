@@ -72,17 +72,17 @@ chunk_size = int(
 with open(saved_files[user_id], "r", encoding="utf-8") as f:
     lines = f.read().splitlines()
 
-        total_parts = math.ceil(
-            len(lines) / chunk_size
-        )
+total_parts = math.ceil(
+    len(lines) / chunk_size
+)
 
-        await update.message.reply_text(
-            f"🚀 Processing Started...\n\n"
-            f"Total Lines: {len(lines)}\n"
-            f"Lines Per File: {chunk_size}\n"
-            f"Files To Be Created: {total_parts}\n\n"
-            f"Use /stop to cancel process."
-        )
+await update.message.reply_text(
+    f"🚀 Processing Started...\n\n"
+    f"Total Lines: {len(lines)}\n"
+    f"Lines Per File: {chunk_size}\n"
+    f"Files To Be Created: {total_parts}\n\n"
+    f"Use /stop to cancel process."
+)
 
         part_no = 1
 
