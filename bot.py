@@ -2,10 +2,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 import math
 
-TOKEN = "8811033165:AAE8avsOiCY8Df-CjvLaQY_eWleJIjdU1TI"
+TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"
 
-saved_file = "input.txt"
-stop_process = False
+saved_file = {}
+stop_requests = {}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -25,9 +25,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stop_process
-
-    stop_process = True
+    user_id = update.effective_user.id
+stop_requests[user_id] = True
 
     await update.message.reply_text(
         "⛔ Process stopped successfully."
@@ -35,11 +34,13 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global saved_file
+    user_id = update.effective_user.id
 
-    file = await update.message.document.get_file()
+file = await update.message.document.get_file()
 
-    await file.download_to_drive(saved_file)
+saved_files[user_id] = f"{user_id}_input.txt"
+
+await file.download_to_drive(saved_files[user_id])
 
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
@@ -51,16 +52,21 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stop_process
+    user_id = update.effective_user.id
 
-    try:
-        stop_process = False
+if user_id not in saved_files:
+    await update.message.reply_text(
+        "Please upload a TXT file first."
+    )
+    return
+
+stop_requests[user_id] = False
 
         chunk_size = int(
             update.message.text.replace("/spl", "")
         )
 
-        with open(saved_file, "r", encoding="utf-8") as f:
+        with open(saved_files[user_id], "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
 
         total_parts = math.ceil(
@@ -79,7 +85,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for i in range(0, len(lines), chunk_size):
 
-            if stop_process:
+            if stop_requests.get(user_id, False):
                 await update.message.reply_text(
                     "⛔ Process stopped by user."
                 )
