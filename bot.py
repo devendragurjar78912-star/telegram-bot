@@ -24,7 +24,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def stop(update: Update, context: Context;
+async def stop(update: Update, context:
 contextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
