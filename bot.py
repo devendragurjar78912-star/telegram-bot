@@ -66,11 +66,11 @@ context: ContextTypes.DEFAULT_TYPE):
 stop_requests[user_id] = False
 
 chunk_size = int(
-            update.message.text.replace("/spl", "")
-        )
+    update.message.text.replace("/spl", "")
+)
 
-        with open(saved_files[user_id], "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
+with open(saved_files[user_id], "r", encoding="utf-8") as f:
+    lines = f.read().splitlines()
 
         total_parts = math.ceil(
             len(lines) / chunk_size
