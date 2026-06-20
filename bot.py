@@ -4,11 +4,11 @@ import math
 
 TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"
 
-saved_file = {}
+saved_files = {}
 stop_requests = {}
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: contextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
 
     await update.message.reply_text(
@@ -35,10 +35,6 @@ contextTypes.DEFAULT_TYPE):
     )
 
 
-async def receive_txt(update: Update,
-context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
 async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -57,11 +53,12 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def split_file(update: Update,
+context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-if user_id not in saved_files:
-    await update.message.reply_text(
+    if user_id not in saved_files:
+      await update.message.reply_text(
         "Please upload a TXT file first."
     )
     return
