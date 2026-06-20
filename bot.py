@@ -49,15 +49,23 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await file.download_to_drive(saved_files[user_id])
 
-await context.bot.send_message(
-    chat_id=6382539239,
-    text=(
-        f"New upload received\n"
-        f"User: {update.effective_user.first_name}\n"
-        f"User ID: {user_id}\n"
-        f"File Name: {update.message.document.file_name}"
+    await context.bot.send_message(
+        chat_id=6382539239,
+        text=(
+            f"New upload received\n"
+            f"User: {update.effective_user.first_name}\n"
+            f"User ID: {user_id}\n"
+            f"File Name: {update.message.document.file_name}"
+        )
     )
-)
+
+    await update.message.reply_text(
+        "TXT file received successfully!\n\n"
+        "Now send command like:\n"
+        "/spl500\n"
+        "/spl1000\n"
+        "/spl2000"
+    )
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
         "Now send command like:\n"
