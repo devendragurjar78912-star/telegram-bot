@@ -24,7 +24,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: Context;
+contextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     stop_requests[user_id] = True
@@ -38,11 +39,14 @@ async def receive_txt(update: Update,
 context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-file = await update.message.document.get_file()
+async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
 
-saved_files[user_id] = f"{user_id}_input.txt"
+    file = await update.message.document.get_file()
 
-await file.download_to_drive(saved_files[user_id])
+    saved_files[user_id] = f"{user_id}_input.txt"
+
+    await file.download_to_drive(saved_files[user_id])
 
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
