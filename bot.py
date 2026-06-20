@@ -1,5 +1,11 @@
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 import math
 
 TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"
@@ -8,7 +14,7 @@ saved_files = {}
 stop_requests = {}
 
 
-async def start(update: Update, context: contextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
 
     await update.message.reply_text(
@@ -24,8 +30,7 @@ async def start(update: Update, context: contextTypes.DEFAULT_TYPE):
     )
 
 
-async def stop(update: Update, context:
-contextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     stop_requests[user_id] = True
@@ -53,36 +58,36 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def split_file(update: Update,
-context: ContextTypes.DEFAULT_TYPE):
+async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    if user_id not in saved_files:
-      await update.message.reply_text(
-        "Please upload a TXT file first."
-    )
-    return
+    try:
+        if user_id not in saved_files:
+            await update.message.reply_text(
+                "Please upload a TXT file first."
+            )
+            return
 
-stop_requests[user_id] = False
+        stop_requests[user_id] = False
 
-chunk_size = int(
-    update.message.text.replace("/spl", "")
-)
+        chunk_size = int(
+            update.message.text.replace("/spl", "")
+        )
 
-with open(saved_files[user_id], "r", encoding="utf-8") as f:
-    lines = f.read().splitlines()
+        with open(saved_files[user_id], "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
 
-total_parts = math.ceil(
-    len(lines) / chunk_size
-)
+        total_parts = math.ceil(
+            len(lines) / chunk_size
+        )
 
-await update.message.reply_text(
-    f"🚀 Processing Started...\n\n"
-    f"Total Lines: {len(lines)}\n"
-    f"Lines Per File: {chunk_size}\n"
-    f"Files To Be Created: {total_parts}\n\n"
-    f"Use /stop to cancel process."
-)
+        await update.message.reply_text(
+            f"🚀 Processing Started...\n\n"
+            f"Total Lines: {len(lines)}\n"
+            f"Lines Per File: {chunk_size}\n"
+            f"Files To Be Created: {total_parts}\n\n"
+            f"Use /stop to cancel process."
+        )
 
         part_no = 1
 
@@ -96,7 +101,7 @@ await update.message.reply_text(
 
             chunk = lines[i:i + chunk_size]
 
-            output_file = f"part_{part_no}.txt"
+            output_file = f"{user_id}_part_{part_no}.txt"
 
             with open(
                 output_file,
