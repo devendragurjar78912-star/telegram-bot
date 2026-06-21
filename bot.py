@@ -67,9 +67,65 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/spl2000"
     )
 
-
-async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
+    if user_id not in saved_files:
+        await update.message.reply_text("Please upload a TXT file first.")
+        return
+
+    prefix = update.message.text.replace("/ext", "").strip()
+
+    result = []
+
+    with open(saved_files[user_id], "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(prefix):
+                result.append(line)
+
+    output_file = f"{prefix}_numbers.txt"
+
+    with open(output_file, "w", encoding="utf-8") as out:
+        out.write("\n".join(result))
+
+    with open(output_file, "rb") as out:
+        await update.message.reply_document(out)
+
+
+async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in saved_files:
+        await update.message.reply_text(
+            "Please upload a TXT file first."
+        )
+        return
+
+    output_file = f"{user_id}_clean.txt"
+
+    with open(saved_files[user_id], "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    cleaned = []
+
+    for line in lines:
+        number = "".join(
+            ch for ch in line if ch.isdigit()
+        )
+
+        if number:
+            cleaned.append(number)
+
+    with open(output_file, "w", encoding="utf-8") as out:
+        out.write("\n".join(cleaned))
+
+    with open(output_file, "rb") as out:
+        await update.message.reply_document(out)
+
+   
+    async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     user_id = update.effective_user.id
 
     try:
         if user_id not in saved_files:
@@ -154,6 +210,18 @@ app.add_handler(
     MessageHandler(
         filters.Regex(r"^/spl\d+$"),
         split_file
+    )
+)
+app.add_handler(
+    MessageHandler(
+        filters.Regex(r"^/ext\d+$"),
+        extract_prefix
+    )
+)
+app.add_handler(
+    CommandHandler(
+        "clear",
+        clear_words
     )
 )
 
