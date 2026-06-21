@@ -122,12 +122,10 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     with open(output_file, "rb") as out:
         await update.message.reply_document(out)
+     async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
 
-   
-    async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-     user_id = update.effective_user.id
-
-      try:
+    try:
         if user_id not in saved_files:
             await update.message.reply_text(
                 "Please upload a TXT file first."
@@ -169,11 +167,7 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             output_file = f"{user_id}_part_{part_no}.txt"
 
-            with open(
-                output_file,
-                "w",
-                encoding="utf-8"
-            ) as out:
+            with open(output_file, "w", encoding="utf-8") as out:
                 out.write("\n".join(chunk))
 
             with open(output_file, "rb") as out:
@@ -191,9 +185,8 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(
             f"Error: {e}"
-        )
-
-
+        )   
+   
 app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
