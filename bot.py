@@ -127,7 +127,7 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
      user_id = update.effective_user.id
 
-    try:
+      try:
         if user_id not in saved_files:
             await update.message.reply_text(
                 "Please upload a TXT file first."
