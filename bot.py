@@ -88,7 +88,12 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = f.readlines()
     cleaned = []
     for line in lines:
-        number = "".join(ch for ch in line if ch.isdigit())
+        parts = line.split("|")
+
+if len(parts) >= 4:
+    cleaned.append(
+        f"{parts[0].strip()}|{parts[1].strip()}|{parts[2].strip()}|{parts[3].strip()}"
+    )
         if number:
             cleaned.append(number)
     with open(output_file, "w", encoding="utf-8") as out:
