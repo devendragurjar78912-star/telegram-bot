@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import math
+import re
 from pathlib import Path
 
 from telegram import Update
@@ -42,7 +43,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
         "Upload a file in .txt format.\n\n"
-        
+        "Use command:\n"
+        "/spl500\n"
+        "/spl1000\n"
+        "/spl2000\n"
+        "/spl5000\n\n"
+        "You can use any number after /spl\n\n"
+        "Use /stop to cancel processing."
     )
 
 
@@ -91,9 +98,14 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
-    prefix = update.message.text.replace("/ext", "").strip()
-    result = []
+    # Grab the digits after /ext (allowing an optional space)
+    match = re.search(r"\d+", update.message.text)
+    if not match:
+        await update.message.reply_text("Please provide a numeric prefix after /ext.")
+        return
+    prefix = match.group()
 
+    result = []
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -147,8 +159,13 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stop_requests[user_id] = False
 
+    # Grab the digits after /spl (allowing an optional space)
+    match = re.search(r"\d+", update.message.text)
+    if not match:
+        await update.message.reply_text("Please provide a number after /spl.")
+        return
     try:
-        chunk_size = int(update.message.text.replace("/spl", ""))
+        chunk_size = int(match.group())
     except ValueError:
         await update.message.reply_text("Invalid number after /spl.")
         return
@@ -199,8 +216,8 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("stop", stop))
 app.add_handler(CommandHandler("clear", clear_words))
 app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
-app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), split_file))
-app.add_handler(MessageHandler(filters.Regex(r"^/ext\d+$"), extract_prefix))
+app.add_handler(MessageHandler(filters.Regex(r"^/spl(?:\s*\d+)$"), split_file))
+app.add_handler(MessageHandler(filters.Regex(r"^/ext(?:\s*\d+)$"), extract_prefix))
 
 print("Bot Running…")
 app.run_polling()
