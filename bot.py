@@ -43,13 +43,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
         "Upload a file in .txt format.\n\n"
-        "Use command:\n"
-        "/spl500\n"
-        "/spl1000\n"
-        "/spl2000\n"
-        "/spl5000\n\n"
-        "You can use any number after /spl\n\n"
-        "Use /stop to cancel processing."
+        
     )
 
 
