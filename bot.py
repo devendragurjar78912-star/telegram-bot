@@ -6,12 +6,12 @@ Telegram TXT‑file helper bot.
 
 Features
 --------
-* Upload a .txt file – the bot forwards it to an admin chat.
-* /ext <prefix>   – return a file with all lines that start with the given numeric prefix.
-* /spl <N>        – split the uploaded file into N‑line chunks and send them one by one.
-* /clear          – keep only the first four pipe‑separated fields of each line.
-* /stop           – abort a long‑running split operation.
-* /help           – show a short help message.
+• Upload a .txt file – the bot forwards it to an admin chat.
+• /ext <prefix> – return a file with all lines that start with the given numeric prefix.
+• /spl <N>      – split the uploaded file into N‑line chunks and send them one by one.
+• /clear        – keep only the first four pipe‑separated fields of each line.
+• /stop         – abort a long‑running split operation.
+• /help         – show a short help message.
 
 Author : White Hack Labs – HackerGPT
 """
@@ -63,7 +63,7 @@ def _unique_output_name(prefix: str, suffix: str = "") -> str:
     ts = int(time.time() * 1000)
     return f"part_{prefix}_{ts}{suffix}.txt"
 
-async def _send_document(ctx, file_path: Path, caption: str | None = None):
+async def _send_document(ctx: ContextTypes.DEFAULT_TYPE, file_path: Path, caption: str | None = None):
     """Utility to send a document to the user."""
     try:
         with open(file_path, "rb") as f:
@@ -116,7 +116,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("❌ Please upload a *.txt file only.")
             return
 
-        # 2️⃣  Get the original file name (may contain spaces, etc.)
+        # 2️⃣  Get the original file name
         original_name = doc.file_name or f"{user_id}_input.txt"
 
         # 3️⃣  Download the file to the uploads/ folder
@@ -287,4 +287,23 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 app = Application.builder().token(TOKEN).build()
 
 # Basic commands
-app.add_handler(Command
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("help", help_cmd))
+app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CommandHandler("clear", clear_words))
+
+# File upload handler
+app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
+
+# Regex commands
+app.add_handler(MessageHandler(filters.Regex(r"^/spl(?:\s*\d+)$"), split_file))
+app.add_handler(MessageHandler(filters.Regex(r"^/ext(?:\s*\d+)$"), extract_prefix))
+
+# Start the bot
+if __name__ == "__main__":
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+    print("Bot Running…")
+    app.run_polling()
