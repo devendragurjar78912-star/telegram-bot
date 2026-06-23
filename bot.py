@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import math
@@ -16,13 +17,13 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"      # <-- replace with your bot token
-ADMIN_ID = 6382539239                       # <-- chat id that receives the uploaded file
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjG d9nsLFsXc"  # <-- replace with your bot token
+ADMIN_ID = 6382539239  # <-- chat id that receives the uploaded file
 
 # ------------------------------------------------------------------
 # 2️⃣  GLOBAL STATE
 # ------------------------------------------------------------------
-# Maps user_id -> path to the file they uploaded
+# Maps user_id -> Path of the file they uploaded
 saved_files: dict[int, Path] = {}
 # Maps user_id -> stop flag for long‑running commands
 stop_requests: dict[int, bool] = {}
@@ -30,36 +31,38 @@ stop_requests: dict[int, bool] = {}
 # ------------------------------------------------------------------
 # 3️⃣  HELPERS
 # ------------------------------------------------------------------
-def _ensure_dir(path: Path):
-    """Create parent directory if it doesn't exist."""
+def _ensure_dir(path: Path) -> None:
+    """Create the parent directory if it does not exist."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
 # ------------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.effective_user.first_name
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
         "Upload a file in .txt format.\n\n"
-        
     )
 
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """User wants to stop a long running task."""
     user_id = update.effective_user.id
     stop_requests[user_id] = True
     await update.message.reply_text("⛔ Process stopped successfully.")
 
 
-async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the upload of a .txt file."""
     user_id = update.effective_user.id
     file = await update.message.document.get_file()
-    # Save the file locally with a unique name
-    file_path = Path(f"{user_id}_input.txt")
+
+    # Keep the *original* file name
+    original_name = file.file_name or f"{user_id}_input.txt"
+    file_path = Path(original_name)
+
     await file.download_to_drive(file_path)
     saved_files[user_id] = file_path
 
@@ -78,14 +81,14 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
         "Use commands:\n"
-        "/splxxx to split TXT file.\n"
-        "/extxxx to extract BIN.\n"
-        "/clear to Clean.\n\n"
+        "/spl <N>  – split into N‑line chunks\n"
+        "/ext <prefix> – extract lines that start with <prefix>\n"
+        "/clear – keep only the first 4 pipe‑separated fields\n\n"
         "Thanks!"
     )
 
 
-async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Extract lines that start with a given prefix."""
     user_id = update.effective_user.id
     if user_id not in saved_files:
@@ -102,11 +105,11 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = []
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         for line in f:
-            line = line.strip()
-            if line.startswith(prefix):
-                result.append(line)
+            if line.strip().startswith(prefix):
+                result.append(line.rstrip("\n"))
 
-    output_file = Path(f"{prefix}_numbers.txt")
+    # Output file named part_<prefix>.txt
+    output_file = Path(f"part_{prefix}.txt")
     _ensure_dir(output_file)
     with open(output_file, "w", encoding="utf-8") as out:
         out.write("\n".join(result))
@@ -115,15 +118,16 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(out)
 
 
-async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Keep only the first 4 pipe‑separated fields (e.g. number|mm|dd|yyy)."""
+async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Keep only the first 4 pipe‑separated fields."""
     user_id = update.effective_user.id
     if user_id not in saved_files:
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
     input_path = saved_files[user_id]
-    output_path = Path(f"{user_id}_clean.txt")
+    # Keep the original file name but add a suffix to avoid overwrite
+    output_path = Path(f"{input_path.stem}_clean{input_path.suffix}")
     _ensure_dir(output_path)
 
     cleaned_lines = []
@@ -131,10 +135,8 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for line in f:
             parts = line.strip().split("|")
             if len(parts) >= 4:
-                # Keep exactly the first 4 parts, re‑join with '|'
                 cleaned_lines.append("|".join(part.strip() for part in parts[:4]))
             else:
-                # If there are fewer than 4 parts, keep the line as is
                 cleaned_lines.append(line.strip())
 
     with open(output_path, "w", encoding="utf-8") as out:
@@ -144,13 +146,14 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(out)
 
 
-async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Split the uploaded file into chunks of N lines."""
     user_id = update.effective_user.id
     if user_id not in saved_files:
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
+    # Reset stop flag
     stop_requests[user_id] = False
 
     # Grab the digits after /spl (allowing an optional space)
@@ -164,12 +167,15 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Invalid number after /spl.")
         return
 
+    # Read all lines once
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
 
     total_parts = math.ceil(len(lines) / chunk_size)
+
+    # Tell the user that processing is starting
     await update.message.reply_text(
-        f"🚀 Processing Started...\n\n"
+        f"🚀 Processing Started…\n\n"
         f"Total Lines: {len(lines)}\n"
         f"Lines Per File: {chunk_size}\n"
         f"Files To Be Created: {total_parts}\n\n"
@@ -183,7 +189,8 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         chunk = lines[i : i + chunk_size]
-        output_file = Path(f"{user_id}_part_{part_no}.txt")
+        # Use file name part_1.txt, part_2.txt, …
+        output_file = Path(f"part_{part_no}.txt")
         _ensure_dir(output_file)
         with open(output_file, "w", encoding="utf-8") as out:
             out.write("\n".join(chunk))
@@ -193,12 +200,8 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         part_no += 1
 
-    await update.message.reply_text(
-        f"✅ Done!\n\n"
-        f"Total Lines: {len(lines)}\n"
-        f"Lines Per File: {chunk_size}\n"
-        f"Total Parts: {part_no - 1}"
-    )
+    # Only the final “Done” message – no extra stats
+    await update.message.reply_text("✅ Done!")
 
 
 # ------------------------------------------------------------------
