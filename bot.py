@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram TXT‑file helper bot.
+Telegram TXT‑file helper bot – fully functional, copy‑and‑paste ready.
 
 Features
 --------
@@ -16,9 +16,7 @@ Features
 Author : White Hack Labs – HackerGPT
 """
 
-import asyncio
 import math
-import os
 import re
 import time
 import logging
@@ -58,17 +56,22 @@ def _unique_output_name(prefix: str, suffix: str = "") -> str:
     """
     Generate a unique file name so that repeated commands do not overwrite
     each other. The name format is:
-        part_<prefix>_<user_id>_<timestamp>_<suffix>.txt
+        part_<prefix>_<timestamp>_<suffix>.txt
     """
     ts = int(time.time() * 1000)
     return f"part_{prefix}_{ts}{suffix}.txt"
 
-async def _send_document(ctx: ContextTypes.DEFAULT_TYPE, file_path: Path, caption: str | None = None):
-    """Utility to send a document to the user."""
+async def _send_document(
+    ctx: ContextTypes.DEFAULT_TYPE,
+    file_path: Path,
+    chat_id: int,
+    caption: str | None = None,
+) -> None:
+    """Utility to send a document to a chat."""
     try:
         with open(file_path, "rb") as f:
             await ctx.bot.send_document(
-                chat_id=ctx.user.id,
+                chat_id=chat_id,
                 document=f,
                 caption=caption,
             )
@@ -124,8 +127,8 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         _ensure_dir(uploads_dir)
         file_path = uploads_dir / original_name
 
-        file = await doc.get_file()
-        await file.download_to_drive(str(file_path))
+        file_obj = await doc.get_file()
+        await file_obj.download_to_drive(str(file_path))
 
         # 4️⃣  Register the file for this user
         saved_files[user_id] = file_path
@@ -136,7 +139,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"User: {update.effective_user.first_name}\n"
             f"User ID: {user_id}"
         )
-        await _send_document(context, file_path, caption)
+        await _send_document(context, file_path, ADMIN_ID, caption)
 
         # 6️⃣  Give the user a friendly reply
         await update.message.reply_text(
@@ -187,7 +190,7 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with open(output_file, "w", encoding="utf-8") as out:
         out.write("\n".join(result_lines))
 
-    await _send_document(context, output_file, f"Lines starting with '{prefix}'")
+    await _send_document(context, output_file, user_id, f"Lines starting with '{prefix}'")
 
 async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Keep only the first 4 pipe‑separated fields."""
@@ -217,7 +220,7 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     with open(output_path, "w", encoding="utf-8") as out:
         out.write("\n".join(cleaned_lines))
 
-    await _send_document(context, output_path, "Cleaned file (first 4 pipe fields)")
+    await _send_document(context, output_path, user_id, "Cleaned file (first 4 pipe fields)")
 
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Split the uploaded file into chunks of N lines."""
@@ -275,7 +278,12 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         with open(output_file, "w", encoding="utf-8") as out:
             out.write("\n".join(chunk))
 
-        await _send_document(context, output_file, f"Part {part_no}/{total_parts}")
+        await _send_document(
+            context,
+            output_file,
+            user_id,
+            f"Part {part_no}/{total_parts}",
+        )
 
         part_no += 1
 
