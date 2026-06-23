@@ -32,9 +32,8 @@ stop_requests: dict[int, bool] = {}
 # 3️⃣  HELPERS
 # ------------------------------------------------------------------
 def _ensure_dir(path: Path) -> None:
-    """Create the parent directory if it does not exist."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
+    """Create the directory if it does not exist."""
+    path.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
@@ -43,80 +42,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.effective_user.first_name
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
-        "Upload a file in .txt format.\n\n"
+        "Upload a .txt file.\n\n"
     )
 
-
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """User wants to stop a long running task."""
     user_id = update.effective_user.id
     stop_requests[user_id] = True
     await update.message.reply_text("⛔ Process stopped successfully.")
 
-
 async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the upload of a .txt file."""
     user_id = update.effective_user.id
-    file = await update.message.document.get_file()
+    try:
+        file = await update.message.document.get_file()
 
-    # Keep the *original* file name
-    original_name = file.file_name or f"{user_id}_input.txt"
-    file_path = Path(original_name)
+        # Keep the original file name and store it in the uploads/ folder
+        uploads_dir = Path("uploads")
+        _ensure_dir(uploads_dir)
+        original_name = file.file_name or f"{user_id}_input.txt"
+        file_path = uploads_dir / original_name
 
-    await file.download_to_drive(file_path)
-    saved_files[user_id] = file_path
+        # Download the file
+        await file.download_to_drive(str(file_path))
 
-    # Forward the file to the admin
-    with open(file_path, "rb") as f:
-        await context.bot.send_document(
-            chat_id=ADMIN_ID,
-            document=f,
-            caption=(
-                f"New upload received\n"
-                f"User: {update.effective_user.first_name}\n"
-                f"User ID: {user_id}"
-            ),
+        # Register the file for this user
+        saved_files[user_id] = file_path
+
+        # Forward the file to the admin
+        with open(file_path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=ADMIN_ID,
+                document=f,
+                caption=(
+                    f"New upload received\n"
+                    f"User: {update.effective_user.first_name}\n"
+                    f"User ID: {user_id}"
+                ),
+            )
+
+        await update.message.reply_text(
+            "TXT file received successfully!\n\n"
+            "Use commands:\n"
+            "/spl <N> – split into N‑line chunks\n"
+            "/ext <prefix> – extract lines that start with <prefix>\n"
+            "/clear – keep only the first 4 pipe‑separated fields\n\n"
+            "Thanks!"
         )
-
-    await update.message.reply_text(
-        "TXT file received successfully!\n\n"
-        "Use commands:\n"
-        "/spl <N>  – split into N‑line chunks\n"
-        "/ext <prefix> – extract lines that start with <prefix>\n"
-        "/clear – keep only the first 4 pipe‑separated fields\n\n"
-        "Thanks!"
-    )
-
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error while processing file: {e}")
 
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Extract lines that start with a given prefix."""
+    """Extract lines that start with a given numeric prefix."""
     user_id = update.effective_user.id
     if user_id not in saved_files:
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
-    # Grab the digits after /ext (allowing an optional space)
     match = re.search(r"\d+", update.message.text)
     if not match:
         await update.message.reply_text("Please provide a numeric prefix after /ext.")
         return
     prefix = match.group()
 
-    result = []
+    result_lines = []
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         for line in f:
             if line.strip().startswith(prefix):
-                result.append(line.rstrip("\n"))
+                result_lines.append(line.rstrip("\n"))
 
-    # Output file named part_<prefix>.txt
-    output_file = Path(f"part_{prefix}.txt")
-    _ensure_dir(output_file)
+    # Output file named part_<prefix>.txt inside uploads/
+    output_file = Path("uploads") / f"part_{prefix}.txt"
+    _ensure_dir(output_file.parent)
     with open(output_file, "w", encoding="utf-8") as out:
-        out.write("\n".join(result))
+        out.write("\n".join(result_lines))
 
     with open(output_file, "rb") as out:
         await update.message.reply_document(out)
-
 
 async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Keep only the first 4 pipe‑separated fields."""
@@ -126,9 +127,9 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     input_path = saved_files[user_id]
-    # Keep the original file name but add a suffix to avoid overwrite
-    output_path = Path(f"{input_path.stem}_clean{input_path.suffix}")
-    _ensure_dir(output_path)
+    # Keep the original file name but add a suffix
+    output_path = input_path.with_stem(input_path.stem + "_clean")
+    _ensure_dir(output_path.parent)
 
     cleaned_lines = []
     with open(input_path, "r", encoding="utf-8") as f:
@@ -145,7 +146,6 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     with open(output_path, "rb") as out:
         await update.message.reply_document(out)
 
-
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Split the uploaded file into chunks of N lines."""
     user_id = update.effective_user.id
@@ -153,10 +153,8 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Please upload a TXT file first.")
         return
 
-    # Reset stop flag
     stop_requests[user_id] = False
 
-    # Grab the digits after /spl (allowing an optional space)
     match = re.search(r"\d+", update.message.text)
     if not match:
         await update.message.reply_text("Please provide a number after /spl.")
@@ -167,13 +165,11 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Invalid number after /spl.")
         return
 
-    # Read all lines once
     with open(saved_files[user_id], "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
 
     total_parts = math.ceil(len(lines) / chunk_size)
 
-    # Tell the user that processing is starting
     await update.message.reply_text(
         f"🚀 Processing Started…\n\n"
         f"Total Lines: {len(lines)}\n"
@@ -189,9 +185,8 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             return
 
         chunk = lines[i : i + chunk_size]
-        # Use file name part_1.txt, part_2.txt, …
-        output_file = Path(f"part_{part_no}.txt")
-        _ensure_dir(output_file)
+        output_file = Path("uploads") / f"part_{part_no}.txt"
+        _ensure_dir(output_file.parent)
         with open(output_file, "w", encoding="utf-8") as out:
             out.write("\n".join(chunk))
 
@@ -200,9 +195,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         part_no += 1
 
-    # Only the final “Done” message – no extra stats
     await update.message.reply_text("✅ Done!")
-
 
 # ------------------------------------------------------------------
 # 5️⃣  BIND HANDLERS & START BOT
