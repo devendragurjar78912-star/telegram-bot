@@ -17,8 +17,8 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"  # <-- replace with your bot token
-ADMIN_ID = 6382539239  # <-- chat id that receives the uploaded file
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"                # <-- replace with your bot token
+ADMIN_ID = 6382539239     # <-- chat id that receives the uploaded file
 
 # ------------------------------------------------------------------
 # 2️⃣  GLOBAL STATE
@@ -35,6 +35,7 @@ def _ensure_dir(path: Path) -> None:
     """Create the directory if it does not exist."""
     path.mkdir(parents=True, exist_ok=True)
 
+
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
 # ------------------------------------------------------------------
@@ -45,30 +46,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Upload a .txt file.\n\n"
     )
 
+
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     stop_requests[user_id] = True
     await update.message.reply_text("⛔ Process stopped successfully.")
 
+
 async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the upload of a .txt file."""
     user_id = update.effective_user.id
     try:
-        file = await update.message.document.get_file()
+        doc = update.message.document
 
-        # Keep the original file name and store it in the uploads/ folder
+        # 1️⃣  Get the original file name (may be a number, symbol, etc.)
+        original_name = doc.file_name
+        if not original_name:
+            # fallback if Telegram didn't send a file name
+            original_name = f"{user_id}_input.txt"
+
+        # 2️⃣  Download the file to the uploads/ folder
         uploads_dir = Path("uploads")
         _ensure_dir(uploads_dir)
-        original_name = file.file_name or f"{user_id}_input.txt"
         file_path = uploads_dir / original_name
 
-        # Download the file
+        file = await doc.get_file()
         await file.download_to_drive(str(file_path))
 
-        # Register the file for this user
+        # 3️⃣  Register the file for this user
         saved_files[user_id] = file_path
 
-        # Forward the file to the admin
+        # 4️⃣  Forward the file to the admin
         with open(file_path, "rb") as f:
             await context.bot.send_document(
                 chat_id=ADMIN_ID,
@@ -80,6 +88,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 ),
             )
 
+        # 5️⃣  Give the user a friendly reply
         await update.message.reply_text(
             "TXT file received successfully!\n\n"
             "Use commands:\n"
@@ -90,6 +99,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error while processing file: {e}")
+
 
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Extract lines that start with a given numeric prefix."""
@@ -119,6 +129,7 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with open(output_file, "rb") as out:
         await update.message.reply_document(out)
 
+
 async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Keep only the first 4 pipe‑separated fields."""
     user_id = update.effective_user.id
@@ -145,6 +156,7 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     with open(output_path, "rb") as out:
         await update.message.reply_document(out)
+
 
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Split the uploaded file into chunks of N lines."""
@@ -196,6 +208,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         part_no += 1
 
     await update.message.reply_text("✅ Done!")
+
 
 # ------------------------------------------------------------------
 # 5️⃣  BIND HANDLERS & START BOT
