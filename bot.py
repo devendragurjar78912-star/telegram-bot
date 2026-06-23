@@ -81,13 +81,12 @@ async def _send_document(
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
 # ------------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a welcome message."""
-    user_name = update.effective_user.first_name
-    await update.message.reply_text(
-        f"Hello {user_name}!\n\n"
-        "Upload a *.txt file and use the following commands:\n"
-    )
+name = update.effective_user.username or update.effective_user.first_name
+
+await update.message.reply_text(
+    f"Hello @{name}!\n\n"
+    "Upload a file in .txt format⚡"
+)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the same help message as /start."""
@@ -137,13 +136,12 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # 6️⃣  Give the user a friendly reply (without the forwarding notice)
         await update.message.reply_text(
-            "TXT file received successfully!\n\n"
-            "Use commands:\n"
-            "/spl <N> – split into N‑line chunks\n"
-            "/ext <prefix> – extract lines that start with <prefix>\n"
-            "/clear – keep only the first 4 pipe‑separated fields\n\n"
-            "Thanks!"
-        )
+    "TXT file received successfully 🔥\n\n"
+    "Use commands 👇\n"
+    "/spl <N> – split TXT file.\n"
+    "/ext <prefix> – extract 6 Digit lines.\n"
+    "/clear – Clean TXT file."
+)
     except Exception as e:
         logging.exception("Error in receive_txt")
         await update.message.reply_text(f"❌ Error while processing file: {e}")
