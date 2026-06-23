@@ -86,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.effective_user.first_name
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
-        "Upload a *.txt file and use the following commands:\n"
+        "Upload a *.file in txt format:\n"
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -140,8 +140,8 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "TXT file received successfully!\n\n"
             "Use commands:\n"
             "/spl <N> – split into N‑line chunks\n"
-            "/ext <prefix> – extract lines that start with <prefix>\n"
-            "/clear – keep only the first 4 pipe‑separated fields\n\n"
+            "/ext <prefix> – extract 6 digit lines\n"
+            "/clear – clear txt file\n\n"
             "Thanks!"
         )
     except Exception as e:
