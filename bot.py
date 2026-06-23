@@ -17,7 +17,7 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjG d9nsLFsXc"  # <-- replace with your bot token
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"  # <-- replace with your bot token
 ADMIN_ID = 6382539239  # <-- chat id that receives the uploaded file
 
 # ------------------------------------------------------------------
