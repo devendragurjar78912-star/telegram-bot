@@ -4,23 +4,12 @@
 """
 Telegram TXT‑Splitter Bot (python‑telegram‑bot v20+)
 
-Features
---------
-• Handles very large .txt files (up to the Telegram Bot API limit – 20 MiB).
-• Works for many users at the same time – each user’s file is kept separate.
-• Commands:
-    /start – welcome message
-    /spl <N> – split the file into N‑line chunks (both “/spl500” and “/spl 500” work)
-    /ext <prefix> – extract lines that start with the given prefix
-    /clear – keep only the first four pipe‑separated fields
-    /stop – abort a long running split
-• For every upload the original file is forwarded to the admin with user info.
-• All file operations are performed in a thread‑pool, so the main event loop stays free.
-• Minimal memory usage – files are processed line‑by‑line (streaming).
-
 Author : White Hack Labs – HackerGPT
 """
 
+# ------------------------------------------------------------
+# Imports
+# ------------------------------------------------------------
 import asyncio
 import logging
 import math
@@ -38,18 +27,18 @@ from telegram.ext import (
     filters,
 )
 
-# ------------------------------------------------------------------
-# 1️⃣  CONFIGURATION
-# ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- replace with your bot token
+# ------------------------------------------------------------
+# 1️⃣  Configuration
+# ------------------------------------------------------------
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- put your BotFather token here
 ADMIN_ID = 6382539239                  # <-- chat id that receives the uploaded file
 
 # Telegram bots can only receive files up to 20 MiB
 MAX_TELEGRAM_FILE_SIZE = 20 * 1024 * 1024  # 20 MiB
 
-# ------------------------------------------------------------------
-# 2️⃣  GLOBAL STATE
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# 2️⃣  Global state
+# ------------------------------------------------------------
 # Maps user_id -> Path of the file they uploaded
 saved_files: dict[int, Path] = {}
 # Maps user_id -> stop flag for long‑running commands
@@ -58,9 +47,9 @@ stop_requests: dict[int, bool] = {}
 # Thread pool for blocking file I/O (splitting, filtering, cleaning)
 executor = ThreadPoolExecutor(max_workers=4)
 
-# ------------------------------------------------------------------
-# 3️⃣  HELPERS
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# 3️⃣  Helper functions
+# ------------------------------------------------------------
 def _ensure_dir(path: Path) -> None:
     """Create the directory if it does not exist."""
     path.mkdir(parents=True, exist_ok=True)
@@ -96,9 +85,9 @@ async def async_read_lines(path: Path):
                 break
             yield line.rstrip("\n")
 
-# ------------------------------------------------------------------
-# 4️⃣  COMMANDS
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# 4️⃣  Commands
+# ------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message."""
     user = update.effective_user
@@ -330,9 +319,9 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not stop_requests.get(user_id, False):
         await update.message.reply_text("✅ Done!")
 
-# ------------------------------------------------------------------
-# 5️⃣  HANDLER SETUP & BOT LAUNCH
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# 5️⃣  Bot setup and launch
+# ------------------------------------------------------------
 app = Application.builder().token(TOKEN).build()
 
 # Basic commands
