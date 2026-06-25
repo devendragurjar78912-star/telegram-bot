@@ -30,7 +30,7 @@ from telegram.ext import (
 # ------------------------------------------------------------
 # 1️⃣  Configuration
 # ------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- put your BotFather token here
+TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"          # <-- put your BotFather token here
 ADMIN_ID = 6382539239                  # <-- chat id that receives the uploaded file
 
 # Telegram bots can only receive files up to 20 MiB
