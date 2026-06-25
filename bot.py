@@ -6,8 +6,8 @@ Telegram TXT‑Splitter Bot (python‑telegram‑bot v20+)
 
 Features
 --------
-• Works with large TXT files (up to the Telegram Bot API limit – 20 MiB).
-• Handles many users at once – each user’s file is stored separately.
+• Handles very large .txt files (up to the Telegram Bot API limit – 20 MiB).
+• Works for many users at the same time – each user’s file is kept separate.
 • Commands:
     /start – welcome message
     /spl <N> – split the file into N‑line chunks (both “/spl500” and “/spl 500” work)
@@ -15,7 +15,7 @@ Features
     /clear – keep only the first four pipe‑separated fields
     /stop – abort a long running split
 • For every upload the original file is forwarded to the admin with user info.
-• All file operations are done in a thread‑pool so the main event loop stays free.
+• All file operations are performed in a thread‑pool, so the main event loop stays free.
 • Minimal memory usage – files are processed line‑by‑line (streaming).
 
 Author : White Hack Labs – HackerGPT
@@ -24,7 +24,6 @@ Author : White Hack Labs – HackerGPT
 import asyncio
 import logging
 import math
-import os
 import re
 import time
 from pathlib import Path
@@ -42,7 +41,7 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- put your bot token here
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- replace with your bot token
 ADMIN_ID = 6382539239                  # <-- chat id that receives the uploaded file
 
 # Telegram bots can only receive files up to 20 MiB
@@ -86,6 +85,16 @@ async def _send_document(
         )
     except Exception as e:
         logging.error("Failed to send document: %s", e)
+
+# Async generator that yields lines from a file without blocking the event loop
+async def async_read_lines(path: Path):
+    loop = asyncio.get_running_loop()
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        while True:
+            line = await loop.run_in_executor(executor, f.readline)
+            if not line:
+                break
+            yield line.rstrip("\n")
 
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
@@ -140,7 +149,7 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         file_path = uploads_dir / doc.file_name
 
         file_obj = await doc.get_file()
-        # download_to_drive is synchronous; run it in the executor to keep the event loop free
+        # download_to_drive is synchronous; run it in the executor
         await asyncio.get_running_loop().run_in_executor(
             executor,
             lambda: file_obj.download_to_drive(str(file_path))
@@ -195,15 +204,10 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     output_path = Path("uploads") / output_file_name
     _ensure_dir(output_path.parent)
 
-    def stream_extract() -> None:
-        """Read input line‑by‑line and write matching lines to output."""
-        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin, \
-             open(output_path, "w", encoding="utf-8") as fout:
-            for line in fin:
-                if line.lstrip().startswith(prefix):
-                    fout.write(line.rstrip("\n") + "\n")
-
-    await asyncio.get_running_loop().run_in_executor(executor, stream_extract)
+    async for line in async_read_lines(input_path):
+        if line.lstrip().startswith(prefix):
+            with open(output_path, "a", encoding="utf-8") as fout:
+                fout.write(line + "\n")
 
     await _send_document(
         context,
@@ -226,17 +230,14 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     output_path = input_path.with_stem(input_path.stem + "_clean")
     _ensure_dir(output_path.parent)
 
-    def stream_clean() -> None:
-        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin, \
-             open(output_path, "w", encoding="utf-8") as fout:
-            for line in fin:
-                parts = line.strip().split("|")
-                if len(parts) >= 4:
-                    fout.write("|".join(part.strip() for part in parts[:4]) + "\n")
-                else:
-                    fout.write(line.strip() + "\n")
-
-    await asyncio.get_running_loop().run_in_executor(executor, stream_clean)
+    async for line in async_read_lines(input_path):
+        parts = line.split("|")
+        if len(parts) >= 4:
+            cleaned = "|".join(part.strip() for part in parts[:4])
+        else:
+            cleaned = line
+        with open(output_path, "a", encoding="utf-8") as fout:
+            fout.write(cleaned + "\n")
 
     await _send_document(
         context,
@@ -273,12 +274,11 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     input_path = saved_files[user_id]
 
-    # ---------- First pass: count total lines ----------
-    def count_lines() -> int:
-        with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
-            return sum(1 for _ in f)
+    # Count total lines (quick pass)
+    async def count_lines() -> int:
+        return sum(1 for _ in await asyncio.to_thread(open, input_path, "r", encoding="utf-8", errors="ignore"))
 
-    total_lines = await asyncio.get_running_loop().run_in_executor(executor, count_lines)
+    total_lines = await count_lines()
     total_parts = math.ceil(total_lines / chunk_size)
 
     await update.message.reply_text(
@@ -289,47 +289,43 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Use /stop to cancel the process."
     )
 
-    # ---------- Second pass: stream split ----------
     part_no = 1
     current_chunk: list[str] = []
 
-    def stream_split() -> None:
-        nonlocal part_no, current_chunk
-        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin:
-            for line in fin:
-                if stop_requests.get(user_id, False):
-                    return  # abort early
+    async for line in async_read_lines(input_path):
+        if stop_requests.get(user_id, False):
+            await update.message.reply_text("⛔ Process stopped by user.")
+            return
 
-                current_chunk.append(line.rstrip("\n"))
-                if len(current_chunk) >= chunk_size:
-                    output_file_name = _unique_output_name(str(part_no), "_spl")
-                    output_path = Path("uploads") / output_file_name
-                    _ensure_dir(output_path.parent)
-                    with open(output_path, "w", encoding="utf-8") as fout:
-                        fout.write("\n".join(current_chunk))
-                    # Send the part
-                    asyncio.run_coroutine_threadsafe(
-                        _send_document(context, output_path, user_id,
-                                       f"Part {part_no}/{total_parts}"),
-                        asyncio.get_running_loop()
-                    )
-                    part_no += 1
-                    current_chunk = []
+        current_chunk.append(line)
+        if len(current_chunk) >= chunk_size:
+            output_file_name = _unique_output_name(str(part_no), "_spl")
+            output_path = Path("uploads") / output_file_name
+            _ensure_dir(output_path.parent)
+            with open(output_path, "w", encoding="utf-8") as fout:
+                fout.write("\n".join(current_chunk))
+            await _send_document(
+                context,
+                output_path,
+                user_id,
+                f"Part {part_no}/{total_parts}"
+            )
+            part_no += 1
+            current_chunk = []
 
-            # Write the last chunk (if any)
-            if current_chunk and not stop_requests.get(user_id, False):
-                output_file_name = _unique_output_name(str(part_no), "_spl")
-                output_path = Path("uploads") / output_file_name
-                _ensure_dir(output_path.parent)
-                with open(output_path, "w", encoding="utf-8") as fout:
-                    fout.write("\n".join(current_chunk))
-                asyncio.run_coroutine_threadsafe(
-                    _send_document(context, output_path, user_id,
-                                   f"Part {part_no}/{total_parts}"),
-                    asyncio.get_running_loop()
-                )
-
-    await asyncio.get_running_loop().run_in_executor(executor, stream_split)
+    # Write the last chunk (if any)
+    if current_chunk and not stop_requests.get(user_id, False):
+        output_file_name = _unique_output_name(str(part_no), "_spl")
+        output_path = Path("uploads") / output_file_name
+        _ensure_dir(output_path.parent)
+        with open(output_path, "w", encoding="utf-8") as fout:
+            fout.write("\n".join(current_chunk))
+        await _send_document(
+            context,
+            output_path,
+            user_id,
+            f"Part {part_no}/{total_parts}"
+        )
 
     if not stop_requests.get(user_id, False):
         await update.message.reply_text("✅ Done!")
