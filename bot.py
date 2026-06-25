@@ -34,7 +34,7 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAG_dex1qyxce8GOcKpKTljGjGd9nsLFsXc"          # <-- replace with your bot token
+TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"          # <-- replace with your bot token
 ADMIN_ID = 6382539239               # <-- chat id that receives the uploaded file
 
 # ------------------------------------------------------------------
@@ -86,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_name = update.effective_user.first_name
     await update.message.reply_text(
         f"Hello {user_name}!\n\n"
-        "Upload a *.file in txt format:\n"
+        "Upload a *.txt file and use the following commands:\n"
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -140,8 +140,8 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "TXT file received successfully!\n\n"
             "Use commands:\n"
             "/spl <N> – split into N‑line chunks\n"
-            "/ext <prefix> – extract 6 digit lines\n"
-            "/clear – clear txt file\n\n"
+            "/ext <prefix> – extract lines that start with <prefix>\n"
+            "/clear – keep only the first 4 pipe‑separated fields\n\n"
             "Thanks!"
         )
     except Exception as e:
