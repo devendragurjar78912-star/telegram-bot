@@ -19,7 +19,7 @@ from telegram.error import TelegramError
 # CONFIGURATION
 # ==================================================
 # Replace with your actual Bot Token or use Environment Variables
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA")
+BOT_TOKEN ="8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
 
 # List of Owner IDs
 OWNER_IDS = [
