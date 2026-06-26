@@ -348,9 +348,6 @@ async def clear_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================================================
 
 def main():
-    if BOT_TOKEN == "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA":
-        print("CRITICAL: Please set your BOT_TOKEN in the code or environment variables.")
-        return
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
