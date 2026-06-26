@@ -3,7 +3,7 @@ import logging
 import asyncio
 import re
 from datetime import datetime
-from telegram import Update, ReplyParameters, InputFile
+from telegram import Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
