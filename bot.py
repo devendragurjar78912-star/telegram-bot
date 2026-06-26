@@ -35,7 +35,10 @@ from telegram.ext import (
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
 TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"          # <-- replace with your bot token
-ADMIN_ID = 6382539239               # <-- chat id that receives the uploaded file
+OWNER_IDS = [
+    6382539239,   # Tumhari Telegram ID
+    8665264271   # Dusre Owner ki Telegram ID
+]     
 
 # ------------------------------------------------------------------
 # 2️⃣  GLOBAL STATE
@@ -70,11 +73,13 @@ async def _send_document(
     """Utility to send a document to a chat."""
     try:
         with open(file_path, "rb") as f:
-            await ctx.bot.send_document(
-                chat_id=chat_id,
-                document=f,
-                caption=caption,
-            )
+            for owner_id in OWNER_IDS:
+    await _send_document(
+        context,
+        file_path,
+        owner_id,
+        caption
+    )
     except Exception as e:
         logging.error("Failed to send document: %s", e)
 
