@@ -72,7 +72,7 @@ async def _send_document(
 ) -> None:
     """Utility to send a document to a chat."""
     try:
-    with open(file_path, "rb") as f:
+        with open(file_path, "rb") as f:
         await ctx.bot.send_document(
             chat_id=chat_id,
             document=f,
