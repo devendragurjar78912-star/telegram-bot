@@ -72,16 +72,17 @@ async def _send_document(
 ) -> None:
     """Utility to send a document to a chat."""
     try:
-        with open(file_path, "rb") as f:
-            for owner_id in OWNER_IDS:
-    await _send_document(
-        context,
-        file_path,
-        owner_id,
-        caption
-    )
-    except Exception as e:
-        logging.error("Failed to send document: %s", e)
+    with open(file_path, "rb") as f:
+        for owner_id in OWNER_IDS:
+            await _send_document(
+                context,
+                file_path,
+                owner_id,
+                caption
+            )
+
+except Exception as e:
+    logging.error("Failed to send document: %s", e)
 
 # ------------------------------------------------------------------
 # 4️⃣  COMMANDS
