@@ -73,14 +73,11 @@ async def _send_document(
     """Utility to send a document to a chat."""
     try:
     with open(file_path, "rb") as f:
-        for owner_id in OWNER_IDS:
-            await _send_document(
-                context,
-                file_path,
-                owner_id,
-                caption
-            )
-
+        await ctx.bot.send_document(
+            chat_id=chat_id,
+            document=f,
+            caption=caption,
+        )
 except Exception as e:
     logging.error("Failed to send document: %s", e)
 
