@@ -19,7 +19,7 @@ from telegram.error import TelegramError
 # CONFIGURATION
 # ==================================================
 # Replace with your actual Bot Token or use Environment Variables
-BOT_TOKEN ="8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
+BOT_TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
 
 # List of Owner IDs
 OWNER_IDS = [
@@ -48,9 +48,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global state to track user files and processing status
-# user_files = { user_id: "path_to_file" }
-user_files = {}
+# Global state to track downloaded files and stop flags
+# Format: {(chat_id, message_id): "path_to_file"}
+downloaded_files = {}
 # stop_flags = { user_id: bool }
 stop_flags = {}
 
@@ -64,14 +64,12 @@ def get_user_identifier(user):
         return f"@{user.username}"
     return user.first_name
 
-async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_path, file_name, file_size):
-    """Forwards the uploaded file to all owners."""
+async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_path, file_name):
+    """Forwards the uploaded file to all owners cleanly without IDs."""
     caption = (
-        f"📩 <b>New upload received</b>\n\n"
-        f"<b>User:</b> {get_user_identifier(user)}\n"
-        f"<b>User ID:</b> <code>{user.id}</code>\n"
-        f"<b>File Name:</b> <code>{file_name}</code>\n"
-        f"<b>File Size:</b> {file_size} bytes"
+        f"📩 <b>New Upload Received</b>\n\n"
+        f"<b>Uploader:</b> {get_user_identifier(user)}\n"
+        f"<b>File Name:</b> <code>{file_name}</code>"
     )
     for owner_id in OWNER_IDS:
         try:
@@ -93,6 +91,39 @@ async def count_lines(file_path):
             count += 1
     return count
 
+async def get_file_from_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Checks if command is a reply to a valid TXT document.
+    Returns (file_path, error_message).
+    """
+    reply = update.message.reply_to_message
+    if not reply or not reply.document:
+        return None, "❌ Please reply directly to the specific TXT file you want to process."
+
+    if not reply.document.file_name.endswith('.txt'):
+        return None, "❌ The replied file is not a valid TXT file."
+
+    chat_id = update.effective_chat.id
+    msg_id = reply.message_id
+    cache_key = (chat_id, msg_id)
+
+    # If the file path is already cached and exists
+    if cache_key in downloaded_files and os.path.exists(downloaded_files[cache_key]):
+        return downloaded_files[cache_key], None
+
+    # If not in cache (e.g. after restart), download it on-the-fly
+    try:
+        msg = await update.message.reply_text("📥 Fetching the target file...")
+        file = await context.bot.get_file(reply.document.file_id)
+        file_path = os.path.join(UPLOADS_DIR, f"{chat_id}_{msg_id}.txt")
+        await file.download_to_drive(file_path)
+        downloaded_files[cache_key] = file_path
+        await msg.delete()
+        return file_path, None
+    except Exception as e:
+        logger.error(f"Error downloading replied file: {e}")
+        return None, f"❌ Failed to download replied file: {str(e)}"
+
 # ==================================================
 # COMMAND HANDLERS
 # ==================================================
@@ -110,7 +141,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 <b>Help Menu</b>\n\n"
         "1️⃣ Upload a <code>.txt</code> file first.\n"
-        "2️⃣ Use commands below:\n\n"
+        "2️⃣ Reply to that file using any command below:\n\n"
         "⚡ <code>/spl &lt;N&gt;</code> – Split TXT file every N lines\n"
         "🔍 <code>/ext &lt;prefix&gt;</code> – Extract lines with prefix\n"
         "🧹 <code>/clear</code> – Format TXT to CARD|MM|YY|CVV\n"
@@ -125,12 +156,13 @@ async def stop_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛑 Stopping process... Please wait.")
 
 # ==================================================
-# FILE UPLOAD HANDLER
+# FILE UPLOAD HANDLE
 # ==================================================
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = user.id
+    chat_id = update.effective_chat.id
+    msg_id = update.message.message_id
     doc = update.message.document
 
     if not doc.file_name.endswith('.txt'):
@@ -140,24 +172,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Download file
     msg = await update.message.reply_text("📥 Downloading file...")
     file = await context.bot.get_file(doc.file_id)
-    file_path = os.path.join(UPLOADS_DIR, f"{user_id}.txt")
+    
+    # Store with unique message ID so replies can map to it perfectly
+    file_path = os.path.join(UPLOADS_DIR, f"{chat_id}_{msg_id}.txt")
     await file.download_to_drive(file_path)
 
-    user_files[user_id] = file_path
-    stop_flags[user_id] = False
+    downloaded_files[(chat_id, msg_id)] = file_path
+    stop_flags[user.id] = False
 
     await msg.edit_text(
         "✅ TXT file received successfully 🔥\n\n"
-        "Use commands 👇\n"
-        "/spl <N> – Split TXT file\n"
-        "/ext <prefix> – Extract prefix lines\n"
-        "/clear – Clean TXT file\n"
-        "/stop – Stop running process\n"
-        "/help – Show help"
+        "<b>Now reply directly to that file with</b> 👇\n"
+        "• /spl <N> – Split TXT file\n"
+        "• /ext <prefix> – Extract prefix lines\n"
+        "• /clear – Clean TXT file\n"
+        "• /stop – Stop running process",
+        parse_mode=ParseMode.HTML
     )
 
-    # Forward to owners
-    await forward_to_owners(context, user, file_path, doc.file_name, doc.file_size)
+    # Forward cleanly to owners
+    await forward_to_owners(context, user, file_path, doc.file_name)
 
 # ==================================================
 # FEATURE: SPLIT (/spl)
@@ -165,8 +199,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in user_files or not os.path.exists(user_files[user_id]):
-        await update.message.reply_text("❌ No file uploaded. Please upload a TXT file first.")
+
+    # Retrieve specific file by replying
+    input_path, error_msg = await get_file_from_reply(update, context)
+    if error_msg:
+        await update.message.reply_text(error_msg)
         return
 
     # Regex to handle /spl100 or /spl 100
@@ -174,7 +211,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     match = re.search(r'/spl\s*(\d+)', text)
     
     if not match:
-        await update.message.reply_text("❌ Invalid format. Use /spl 100 or /spl100")
+        await update.message.reply_text("❌ Invalid format. Reply to a file with: /spl 100 or /spl100")
         return
 
     lines_per_file = int(match.group(1))
@@ -182,7 +219,6 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Number must be greater than 0.")
         return
 
-    input_path = user_files[user_id]
     total_lines = await count_lines(input_path)
     num_files = (total_lines + lines_per_file - 1) // lines_per_file
 
@@ -211,7 +247,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 line_count += 1
 
                 if line_count >= lines_per_file:
-                    out_filename = f"{user_id}_part_{current_file_num}.txt"
+                    out_filename = f"part_{current_file_num}_{user_id}.txt"
                     out_path = os.path.join(OUTPUTS_DIR, out_filename)
                     
                     with open(out_path, 'w', encoding='utf-8') as outfile:
@@ -228,7 +264,7 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Handle remaining lines
             if current_out_lines:
-                out_filename = f"{user_id}_part_{current_file_num}.txt"
+                out_filename = f"part_{current_file_num}_{user_id}.txt"
                 out_path = os.path.join(OUTPUTS_DIR, out_filename)
                 with open(out_path, 'w', encoding='utf-8') as outfile:
                     outfile.writelines(current_out_lines)
@@ -247,20 +283,22 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in user_files or not os.path.exists(user_files[user_id]):
-        await update.message.reply_text("❌ No file uploaded.")
+
+    # Retrieve specific file by replying
+    input_path, error_msg = await get_file_from_reply(update, context)
+    if error_msg:
+        await update.message.reply_text(error_msg)
         return
 
     text = update.message.text
     # Catching prefix regardless of space
     match = re.search(r'/ext\s*(.+)', text)
     if not match:
-        await update.message.reply_text("❌ Use /ext <prefix> (e.g., /ext4960)")
+        await update.message.reply_text("❌ Reply with: /ext <prefix> (e.g., /ext4960)")
         return
 
     prefix = match.group(1).strip()
-    input_path = user_files[user_id]
-    out_filename = f"{user_id}_ext.txt"
+    out_filename = f"extracted_{user_id}.txt"
     out_path = os.path.join(OUTPUTS_DIR, out_filename)
     
     await update.message.reply_text(f"🔍 Extracting lines starting with: `{prefix}`", parse_mode=ParseMode.MARKDOWN)
@@ -301,12 +339,14 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in user_files or not os.path.exists(user_files[user_id]):
-        await update.message.reply_text("❌ No file uploaded.")
+
+    # Retrieve specific file by replying
+    input_path, error_msg = await get_file_from_reply(update, context)
+    if error_msg:
+        await update.message.reply_text(error_msg)
         return
 
-    input_path = user_files[user_id]
-    out_filename = f"{user_id}_clean.txt"
+    out_filename = f"cleaned_{user_id}.txt"
     out_path = os.path.join(OUTPUTS_DIR, out_filename)
     
     await update.message.reply_text("🧹 Cleaning file... (Keeping CARD|MM|YY|CVV)")
@@ -356,7 +396,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stop", stop_process))
     
-    # Regex handlers for commands without spaces (/spl100)
+    # Regex handlers for commands without spaces (/spl100) or with spaces
     application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') | filters.Regex(r'^/spl\s+\d+$'), split_file))
     application.add_handler(MessageHandler(filters.Regex(r'^/ext.+$'), extract_prefix))
     
