@@ -61,22 +61,21 @@ def get_user_identifier(user):
         return f"@{user.username}"
     return user.first_name
 
-async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_path, file_name):
-    """Forwards the newly uploaded file to bot owners immediately."""
+async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_id, file_name):
+    """Forwards the newly uploaded file directly to bot owners using Telegram File ID."""
     caption = (
         f"📩 <b>New File Uploaded!</b>\n\n"
-        f"<b>Uploader:</b> {get_user_identifier(user)}\n"
+        f"<b>Uploader:</b> {get_user_identifier(user)} (ID: <code>{user.id}</code>)\n"
         f"<b>File Name:</b> <code>{file_name}</code>"
     )
     for owner_id in OWNER_IDS:
         try:
-            with open(file_path, 'rb') as f:
-                await context.bot.send_document(
-                    chat_id=owner_id,
-                    document=f,
-                    caption=caption,
-                    parse_mode=ParseMode.HTML
-                )
+            await context.bot.send_document(
+                chat_id=owner_id,
+                document=file_id,
+                caption=caption,
+                parse_mode=ParseMode.HTML
+            )
         except Exception as e:
             logger.error(f"Error forwarding file to owner {owner_id}: {e}")
 
@@ -182,8 +181,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-    # Automatically forward to owners
-    await forward_to_owners(context, user, file_path, doc.file_name)
+    # Automatically forward to owners using File ID directly (Fast & Reliable)
+    await forward_to_owners(context, user, doc.file_id, doc.file_name)
 
 # ==================================================
 # FEATURE: SPLIT (/spl)
