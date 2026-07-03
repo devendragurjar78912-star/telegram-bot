@@ -21,7 +21,7 @@ from telegram.error import TelegramError
 # Apna asli Bot Token yahan daalein
 BOT_TOKEN = "8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA"
 
-# Sirf ek Owner ki Telegram User ID (Yahan aap apni ID daalein)
+# Sirf ek Owner ki Telegram User ID (Updated)
 OWNER_ID = 8665264271
 
 # Paths setup
@@ -374,4 +374,14 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stop", stop_process))
     
-    application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') |
+    application.add_handler(MessageHandler(filters.Regex(r'^/spl\d+$') | filters.Regex(r'^/spl\s+\d+$'), split_file))
+    application.add_handler(MessageHandler(filters.Regex(r'^/ext.+$'), extract_prefix))
+    application.add_handler(CommandHandler("clear", clear_file))
+    
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
+    print("Bot is running...")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
