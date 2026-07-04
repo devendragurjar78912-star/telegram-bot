@@ -1,3 +1,6 @@
+### 3. `bot.py`
+This is the main bot file. It handles file streams, cooperative cancellation, owner forwards, and concurrent update delivery.
+```python
 import os
 import re
 import shutil
@@ -35,9 +38,9 @@ for directory in ["uploads", "outputs", "logs"]:
     os.makedirs(directory, exist_ok=True)
 
 # Parse Environment Variables
-BOT_TOKEN = os.getenv("8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_IDS = []
-owner_env = os.getenv("8665264271")
+owner_env = os.getenv("OWNER_IDS", "")
 if owner_env:
     for oid in owner_env.split(','):
         try:
