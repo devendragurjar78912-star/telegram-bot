@@ -1,8 +1,3 @@
----
-
-### 3. `bot.py`
-This is the main bot file. It handles file streams, cooperative cancellation, owner forwards, and concurrent update delivery.
-```python
 import os
 import re
 import shutil
