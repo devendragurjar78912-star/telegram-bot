@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Telegram “Railway‑Line‑Cleaner” Bot
+-----------------------------------
+Upload a .txt file, then use:
+
+  /spl <N>      – split the file into N‑line chunks
+  /ext <prefix> – extract all lines that start with the given digit string
+  /clear        – keep only the first three pipe‑separated fields
+
+All resulting files are sent only to the bot owner.
+"""
+
 import os
 import tempfile
 from pathlib import Path
@@ -78,7 +90,7 @@ def extract_prefix(file_path: Path, prefix: str) -> Path:
     return output_path
 
 def clear_file(file_path: Path) -> Path:
-    """Return a new file where each line keeps only the first three pipe-separated fields."""
+    """Return a new file where each line keeps only the first three pipe‑separated fields."""
     output_path = file_path.with_name(f"{file_path.stem}_cleared.txt")
     with open(file_path, "r", encoding="utf-8") as src, \
          open(output_path, "w", encoding="utf-8") as dst:
@@ -97,9 +109,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hi! 👋\n\n"
         "Upload a file in .txt format and then use the following commands:\n\n"
-        "/spl <N> – split TXT file into N‑line parts.\n"
-        "/ext <prefix> – extract lines that start with the given 6‑digit prefix.\n"
-        "/clear – keep only the first three pipe‑separated fields of every line.\n\n"
+        "/spl <N>      – split TXT file into N‑line parts.\n"
+        "/ext <prefix> – extract lines that start with the given digit string.\n"
+        "/clear        – keep only the first three pipe‑separated fields of every line.\n\n"
         "All processed files will be sent to the bot owner."
     )
 
@@ -159,12 +171,12 @@ async def ext_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /ext <6‑digit_prefix>")
+        await update.message.reply_text("Usage: /ext <digit_prefix>")
         return
 
     prefix = context.args[0]
-    if not prefix.isdigit() or len(prefix) != 6:
-        await update.message.reply_text("Prefix must be exactly 6 digits.")
+    if not prefix.isdigit():
+        await update.message.reply_text("Prefix must consist only of digits.")
         return
 
     ext_file = extract_prefix(user_file, prefix)
@@ -208,7 +220,7 @@ async def main():
     # Unknown commands
     app.add_handler(MessageHandler(filters.COMMAND, unknown_handler))
 
-    # Run the bot until Ctrl-C
+    # Run the bot until Ctrl‑C
     await app.run_polling()
 
 if __name__ == "__main__":
