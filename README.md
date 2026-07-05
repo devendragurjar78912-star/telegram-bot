@@ -1,32 +1,18 @@
-# Telegram TXT Processing Bot
+# Telegram Large TXT File Splitter Bot
+
+A production-ready Telegram Bot built using **Python 3.12** and **python-telegram-bot v22+** designed to parse and split large text files (up to 10GB programmatic threshold) using stream-processing patterns.
 
 ## Features
+- **Strict Stream Processing**: Uses generator files reading pattern. Never executes `read()` or `readlines()`, preventing memory depletion (OOM) on high loads.
+- **Immediate Upload / Cleanup**: Generates and uploads file chunks asynchronously, immediately deleting them from the system disk to operate safely on small system quotas.
+- **Admin Access Layer**: Restricts usage to designated users by matching account details with IDs supplied inside environment variables.
+- **Live Interrupt Capability**: `/stop` command gracefully ends a running process loop midway through execution.
 
-- Split TXT (/spl)
-- Extract Prefix (/ext)
-- Clear TXT (/clear)
-- Stop Process (/stop)
-- Multi User Support
-- Railway Deployment
-- Automatic Owner Forward
-- Large TXT Support
-- Logging
-- Environment Variables
+## Configuration & Deployment on Railway
 
-## Railway Variables
-
-BOT_TOKEN=8811033165:AAG4NQszrJa3bP0Cgz-nuanE1g7RVVb2coA
-
-OWNER_IDS=8665264271
-
-## Deploy
-
-Upload all files to GitHub.
-
-Connect GitHub with Railway.
-
-Add Variables.
-
-Deploy.
-
-Done.
+### 1. Locally Config & Setup
+1. Clone your repository.
+2. Initialize virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # Or .venv\Scripts\activate on Windows
