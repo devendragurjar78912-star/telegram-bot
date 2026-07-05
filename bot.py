@@ -128,6 +128,8 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if len(parts) >= 4:
             out.write("|".join(parts[:4]) + "\n")
+        else:
+            out.write(line)
 
     with open(output_path, "rb") as out:
         await update.message.reply_document(out)
