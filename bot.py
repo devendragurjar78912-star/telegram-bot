@@ -15,8 +15,8 @@ from telegram.ext import (
 # ------------------------------------------------------------------
 # 1️⃣  CONFIGURATION
 # ------------------------------------------------------------------
-TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"          # <- put your bot token here
-ADMIN_ID = 8665264271                         # <- chat id that receives the uploaded file
+TOKEN = "8811033165:AAH2Yi9WsrxRYMwQWce2hPt78YfBsUeSVE4"      # <-- replace with your bot token
+ADMIN_ID = 8665264271                      # <-- chat id that receives the uploaded file
 
 # ------------------------------------------------------------------
 # 2️⃣  GLOBAL STATE
@@ -40,15 +40,9 @@ def _ensure_dir(path: Path):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     await update.message.reply_text(
-        f"Hello {user_name} 🥷!\n\n"
+        f"Hello {user_name}!\n\n"
         "Upload a file in .txt format.\n\n"
-        "Use command:\n"
-        "/spl500\n"
-        "/spl1000\n"
-        "/spl2000\n"
-        "/spl5000\n\n"
-        "You can use any number after /spl\n\n"
-        "Use /stop to cancel processing."
+        
     )
 
 
@@ -82,11 +76,11 @@ async def receive_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "TXT file received successfully!\n\n"
-        "Now send command like:\n"
-        "/spl500\n"
-        "/spl1000\n"
-        "/spl2000\n"
-        "/clear"
+        "Use commands:\n"
+        "/splxxx to split TXT file.\n"
+        "/extxxx to extract BIN.\n"
+        "/clear to Clean.\n\n"
+        "Thanks!"
     )
 
 
