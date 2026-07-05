@@ -1,520 +1,563 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Telegram TXT‑Processing Bot
+Author: Your Name
+"""
+
 import os
 import re
-import shutil
-import logging
 import asyncio
+import logging
 import zipfile
-from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from datetime import datetime
+from typing import List
 
-from dotenv import load_dotenv
-from telegram import Update
+import aiofiles
+from telegram import (
+    Update,
+    BotCommand,
+    ChatAction,
+    Message,
+    InputFile,
+    File,
+    ParseMode,
+)
 from telegram.ext import (
     Application,
+    CommandHandler,
     MessageHandler,
-    filters,
     ContextTypes,
+    filters,
 )
 
-# Load environment variables
-load_dotenv()
+# --------------------------------------------------------------------------- #
+# Configuration
+# --------------------------------------------------------------------------- #
 
-# Setup logging
-os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        RotatingFileHandler("logs/bot.log", maxBytes=5 * 1024 * 1024, backupCount=2),
-        logging.StreamHandler()
-    ]
+BOT_TOKEN: str = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable not set")
+
+OWNER_IDS: List[int] = [
+    int(id_.strip()) for id_ in os.getenv("OWNER_IDS", "").split(",") if id_.strip()
+]
+if not OWNER_IDS:
+    raise RuntimeError("OWNER_IDS environment variable not set or empty")
+
+DATA_DIR = Path("data")
+LOG_DIR = Path("logs")
+LOG_FILE = LOG_DIR / "bot.log"
+
+# --------------------------------------------------------------------------- #
+# Logging
+# --------------------------------------------------------------------------- #
+
+LOG_DIR.mkdir(exist_ok=True)
+logger = logging.getLogger("telegram_bot")
+logger.setLevel(logging.INFO)
+handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=5_000_000, backupCount=5
 )
-logger = logging.getLogger(__name__)
+formatter = logging.Formatter(
+    "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
-# System Directories Initialization
-for directory in ["uploads", "outputs", "logs"]:
-    os.makedirs(directory, exist_ok=True)
+# --------------------------------------------------------------------------- #
+# Utility helpers
+# --------------------------------------------------------------------------- #
 
-# Parse Environment Variables
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_IDS = []
-owner_env = os.getenv("OWNER_IDS", "")
-if owner_env:
-    for oid in owner_env.split(','):
-        try:
-            OWNER_IDS.append(int(oid.strip()))
-        except ValueError:
-            logger.warning(f"Invalid Owner ID skipped: {oid}")
-
-# In-Memory Concurrency state management
-is_processing = {}
-cancellation_flags = {}
-
-
-class ProcessCancelledException(Exception):
-    """Exception raised when processing is aborted via /stop."""
-    pass
-
-
-def format_size(size_bytes: int) -> str:
-    """Formats file size into human-readable representation."""
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.2f} KB"
-    else:
-        return f"{size_bytes / (1024 * 1024):.2f} MB"
-
-
-async def count_lines(file_path: str) -> int:
+async def download_file(
+    file_id: str, dest_path: Path, chat: Message
+) -> File:
     """
-    Counts total lines in a file asynchronously and efficiently.
-    Uses buffered reading in C-level loop chunks to prevent RAM bloat.
+    Downloads a Telegram file to the given destination path.
     """
-    def sync_count():
-        count = 0
+    file_obj = await chat.bot.get_file(file_id)
+    await file_obj.download_to_drive(custom_path=str(dest_path))
+    return file_obj
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Keep only the base name and force .txt extension.
+    """
+    base = Path(filename).stem
+    return f"{base}.txt"
+
+
+async def forward_to_owners(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Forward the uploaded file to all OWNER_IDS and send a summary message.
+    """
+    message = update.message
+    if not message:
+        return
+
+    for owner_id in OWNER_IDS:
         try:
-            with open(file_path, 'rb') as f:
-                # Read 1MB chunks to count newline markers efficiently
-                buf_size = 1024 * 1024
-                read_generator = iter(lambda: f.read(buf_size), b"")
-                count = sum(buffer.count(b'\n') for buffer in read_generator)
-        except Exception as e:
-            logger.error(f"Error counting lines for file {file_path}: {e}")
-        return count
+            await message.forward_chat(chat_id=owner_id)
+        except Exception as exc:
+            logger.error(f"Failed to forward to {owner_id}: {exc}")
 
-    return await asyncio.to_thread(sync_count)
+    # Compose summary
+    user = message.from_user
+    summary = (
+        f"*New TXT file uploaded*\n"
+        f"👤 *Name:* {user.full_name}\n"
+        f"✉️ *Username:* @{user.username or 'N/A'}\n"
+        f"🆔 *User ID:* {user.id}\n"
+        f"🕒 *Upload Time:* {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        f"📄 *File Name:* {message.document.file_name}\n"
+        f"💾 *File Size:* {message.document.file_size:,} bytes"
+    )
+
+    for owner_id in OWNER_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=owner_id, text=summary, parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as exc:
+            logger.error(f"Failed to send summary to {owner_id}: {exc}")
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Executes /start action."""
-    user = update.effective_user
-    username_or_name = f"@{user.username}" if user.username else user.first_name
+async def edit_progress(
+    context: ContextTypes.DEFAULT_TYPE, message: Message, progress: int
+):
+    """
+    Edit the progress message.
+    """
+    try:
+        await message.edit_text(f"Processing... {progress}%")
+    except Exception:
+        pass  # message may already be deleted
+
+
+# --------------------------------------------------------------------------- #
+# Command Handlers
+# --------------------------------------------------------------------------- #
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"Hello {username_or_name}!\n\n"
-        f"Upload a file in .txt format ⚡"
+        "👋 Hi! I can split, filter, or clean your TXT files.\n"
+        "Use /help to see all commands."
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Executes /help action."""
     help_text = (
-        "💡 *How to use the TXT Splitter Bot:*\n\n"
-        "1️⃣ *Upload a TXT File:* Send any `.txt` file.\n\n"
-        "2️⃣ *Choose an action:*\n"
-        "🔹 `/spl <N>` or `/splN` — Splits your uploaded TXT file into files containing `N` lines each. (e.g., `/spl 5000` or `/spl5000`)\n"
-        "🔹 `/ext <prefix>` or `/ext<prefix>` — Extracts lines starting with your input prefix. (e.g., `/ext 4960` or `/ext4960`)\n"
-        "🔹 `/clear` — Cleans formatted lists, keeping only the first 4 fields (CARD|MM|YY|CVV).\n"
-        "🔹 `/stop` — Gracefully stops an ongoing process.\n"
-        "🔹 `/help` — Show this instruction message again.\n\n"
-        "⚠️ _Note: All processes run isolated. File safety is maintained using unique identifiers._"
+        "*Available Commands*\n"
+        "/start – Show this message\n"
+        "/help – Show this help\n"
+        "/spl <N> or /spl<N> – Split file into parts with N lines each\n"
+        "/ext <prefix> or /ext<prefix> – Keep only lines starting with prefix\n"
+        "/clear – Clean each line into CARD|MM|YY|CVV format\n"
+        "/stop – Cancel the current operation\n"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 
-async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Executes /stop action."""
-    user_id = update.effective_user.id
-    if is_processing.get(user_id, False):
-        cancellation_flags[user_id] = True
-        await update.message.reply_text("🛑 Cancellation request received. Stopping process shortly...")
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    task = context.user_data.get("task")
+    if task and not task.done():
+        task.cancel()
+        await update.message.reply_text("⚠️ Operation cancelled.")
     else:
-        await update.message.reply_text("ℹ️ No active process is running to stop.")
+        await update.message.reply_text("⚠️ No active operation to cancel.")
 
 
-async def spl_command(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
-    """Executes /spl action."""
-    user_id = update.effective_user.id
-
-    # Parse numeric parameter
-    match = re.match(r'^/spl\s*(\d+)$', raw_text, re.IGNORECASE)
-    if not match:
-        await update.message.reply_text(
-            "❌ Invalid command usage.\n\n"
-            "Please specify lines per file. Example:\n"
-            "👉 `/spl 100` or `/spl100` (where 100 is the number of lines per file)",
-            parse_mode="Markdown"
-        )
-        return
-
-    lines_per_file = int(match.group(1))
-    if lines_per_file <= 0:
-        await update.message.reply_text("❌ Split boundary must be a positive integer.")
-        return
-
-    input_path = f"uploads/{user_id}.txt"
-    if not os.path.exists(input_path):
-        await update.message.reply_text("❌ No TXT file uploaded yet. Please upload a .txt file first.")
-        return
-
-    if is_processing.get(user_id, False):
-        await update.message.reply_text("⚠️ A process is already running. Use /stop to cancel it first.")
-        return
-
-    is_processing[user_id] = True
-    cancellation_flags[user_id] = False
-
-    user_output_dir = f"outputs/{user_id}_split"
-    zip_path = f"outputs/{user_id}_split_parts.zip"
-
-    try:
-        total_lines = await count_lines(input_path)
-        if total_lines == 0:
-            await update.message.reply_text("❌ The uploaded TXT file is empty.")
-            return
-
-        files_to_create = (total_lines + lines_per_file - 1) // lines_per_file
-
-        status_msg = await update.message.reply_text(
-            f"🚀 *Processing Started*\n\n"
-            f"📊 *Total Lines:* {total_lines}\n"
-            f"📄 *Lines Per File:* {lines_per_file}\n"
-            f"📁 *Files To Create:* {files_to_create}\n\n"
-            f"⏳ *Processing...*",
-            parse_mode="Markdown"
-        )
-
-        # Re-initialize output directory
-        if os.path.exists(user_output_dir):
-            shutil.rmtree(user_output_dir)
-        os.makedirs(user_output_dir, exist_ok=True)
-
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-
-        part_index = 1
-        current_line_count = 0
-        out_file = None
-
-        # Process file using asynchronous generators patterns
-        with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in:
-            for line in f_in:
-                if cancellation_flags.get(user_id, False):
-                    raise ProcessCancelledException()
-
-                if out_file is None:
-                    part_path = os.path.join(user_output_dir, f"{user_id}_part_{part_index}.txt")
-                    out_file = open(part_path, 'w', encoding='utf-8')
-
-                out_file.write(line)
-                current_line_count += 1
-
-                if current_line_count % lines_per_file == 0:
-                    out_file.close()
-                    out_file = None
-                    part_index += 1
-
-                # Yield control to Python event loop every 2000 lines to keep bot responsive to /stop
-                if current_line_count % 2000 == 0:
-                    await asyncio.sleep(0.001)
-
-        if out_file is not None:
-            out_file.close()
-
-        generated_files = sorted(os.listdir(user_output_dir))
-        total_created = len(generated_files)
-
-        if total_created == 0:
-            await status_msg.edit_text("❌ Splitting yielded zero files.")
-            return
-
-        await status_msg.edit_text("✅ *Processing Finished!* Delivering output...", parse_mode="Markdown")
-
-        # Select individual delivery or unified ZIP delivery based on volume
-        if total_created <= 5:
-            for fname in generated_files:
-                fpath = os.path.join(user_output_dir, fname)
-                with open(fpath, 'rb') as doc_payload:
-                    await update.message.reply_document(
-                        document=doc_payload,
-                        filename=fname,
-                        caption=f"📂 Split segment: {fname.split('_')[-1]}"
-                    )
-        else:
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for fname in generated_files:
-                    fpath = os.path.join(user_output_dir, fname)
-                    zipf.write(fpath, arcname=fname)
-
-            with open(zip_path, 'rb') as zip_payload:
-                await update.message.reply_document(
-                    document=zip_payload,
-                    filename=f"{user_id}_split_parts.zip",
-                    caption=f"✅ Created {total_created} files.\n\n📦 Package structured inside single ZIP archive."
-                )
-
-    except ProcessCancelledException:
-        await update.message.reply_text("❌ Splitting execution cancelled.")
-    except Exception as e:
-        logger.error(f"Error handling spl command for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text("❌ An unexpected structural error occurred while executing the split action.")
-    finally:
-        # Cleanup temporary outputs
-        if os.path.exists(user_output_dir):
-            shutil.rmtree(user_output_dir)
-        if os.path.exists(zip_path):
-            try:
-                os.remove(zip_path)
-            except OSError:
-                pass
-        is_processing[user_id] = False
-        cancellation_flags[user_id] = False
-
-
-async def ext_command(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
-    """Executes /ext action."""
-    user_id = update.effective_user.id
-
-    # Parse prefix parameter
-    match = re.match(r'^/ext\s*(.+)$', raw_text, re.IGNORECASE)
-    if not match:
-        await update.message.reply_text(
-            "❌ Invalid command usage.\n\n"
-            "Please specify a query string. Example:\n"
-            "👉 `/ext 4960` or `/ext4960`",
-            parse_mode="Markdown"
-        )
-        return
-
-    prefix = match.group(1).strip()
-    input_path = f"uploads/{user_id}.txt"
-    if not os.path.exists(input_path):
-        await update.message.reply_text("❌ No TXT file uploaded yet. Please upload a .txt file first.")
-        return
-
-    if is_processing.get(user_id, False):
-        await update.message.reply_text("⚠️ A process is already running. Use /stop to cancel it first.")
-        return
-
-    is_processing[user_id] = True
-    cancellation_flags[user_id] = False
-
-    output_path = f"outputs/{user_id}_ext.txt"
-    try:
-        status_msg = await update.message.reply_text(
-            f"🚀 *Extraction Started*\n\n"
-            f"🔍 *Filter Prefix:* `{prefix}`\n\n"
-            f"⏳ *Scanning file...*",
-            parse_mode="Markdown"
-        )
-
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
-        matched_count = 0
-        total_processed = 0
-
-        with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in, \
-             open(output_path, 'w', encoding='utf-8') as f_out:
-            for line in f_in:
-                if cancellation_flags.get(user_id, False):
-                    raise ProcessCancelledException()
-
-                if line.startswith(prefix):
-                    f_out.write(line)
-                    matched_count += 1
-
-                total_processed += 1
-                if total_processed % 2000 == 0:
-                    await asyncio.sleep(0.001)
-
-        if matched_count == 0:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            await status_msg.edit_text(f"❌ No lines found matching prefix: `{prefix}`", parse_mode="Markdown")
-            return
-
-        await status_msg.edit_text(f"✅ *Extraction Finished!* Matches identified: `{matched_count}`. Delivering file...", parse_mode="Markdown")
-
-        with open(output_path, 'rb') as doc_payload:
-            await update.message.reply_document(
-                document=doc_payload,
-                filename=f"{user_id}_ext.txt",
-                caption=f"✅ Extracted lines starting with: '{prefix}'\n📊 Total Matched: {matched_count}"
-            )
-
-    except ProcessCancelledException:
-        await update.message.reply_text("❌ Extraction execution cancelled.")
-    except Exception as e:
-        logger.error(f"Error handling ext command for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text("❌ An unexpected structural error occurred while executing the search query.")
-    finally:
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except OSError:
-                pass
-        is_processing[user_id] = False
-        cancellation_flags[user_id] = False
-
-
-async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Executes /clear action."""
-    user_id = update.effective_user.id
-
-    input_path = f"uploads/{user_id}.txt"
-    if not os.path.exists(input_path):
-        await update.message.reply_text("❌ No TXT file uploaded yet. Please upload a .txt file first.")
-        return
-
-    if is_processing.get(user_id, False):
-        await update.message.reply_text("⚠️ A process is already running. Use /stop to cancel it first.")
-        return
-
-    is_processing[user_id] = True
-    cancellation_flags[user_id] = False
-
-    output_path = f"outputs/{user_id}_clean.txt"
-    try:
-        status_msg = await update.message.reply_text(
-            f"🚀 *Cleaning Started*\n\n"
-            f"🧹 Processing line-by-line format to standard parameters (CARD|MM|YY|CVV)...\n\n"
-            f"⏳ *Formatting...*",
-            parse_mode="Markdown"
-        )
-
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
-        cleaned_count = 0
-        skipped_count = 0
-        total_processed = 0
-
-        with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in, \
-             open(output_path, 'w', encoding='utf-8') as f_out:
-            for line in f_in:
-                if cancellation_flags.get(user_id, False):
-                    raise ProcessCancelledException()
-
-                # Process pipe formatting syntax
-                parts = line.strip().split('|')
-                if len(parts) >= 4:
-                    cleaned_parts = [p.strip() for p in parts[:4]]
-                    cleaned_line = "|".join(cleaned_parts) + "\n"
-                    f_out.write(cleaned_line)
-                    cleaned_count += 1
-                else:
-                    skipped_count += 1
-
-                total_processed += 1
-                if total_processed % 2000 == 0:
-                    await asyncio.sleep(0.001)
-
-        if cleaned_count == 0:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            await status_msg.edit_text("❌ No valid segments matching card pattern templates (4 fields containing '|') identified.", parse_mode="Markdown")
-            return
-
-        await status_msg.edit_text(f"✅ *Cleaning Finished!* Delivering sanitized data...", parse_mode="Markdown")
-
-        with open(output_path, 'rb') as doc_payload:
-            await update.message.reply_document(
-                document=doc_payload,
-                filename=f"{user_id}_clean.txt",
-                caption=f"✅ Formatting Completed (CARD|MM|YY|CVV)\n\n🧹 Matches structured: {cleaned_count}\n⚠️ Skipped structural anomalies: {skipped_count}"
-            )
-
-    except ProcessCancelledException:
-        await update.message.reply_text("❌ Sanitization process cancelled.")
-    except Exception as e:
-        logger.error(f"Error handling clear command for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text("❌ An unexpected structural error occurred while processing formatting rules.")
-    finally:
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except OSError:
-                pass
-        is_processing[user_id] = False
-        cancellation_flags[user_id] = False
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Router for all text entries, supporting both spaced and direct inline arguments."""
-    if not update.message or not update.message.text:
-        return
-
-    text = update.message.text.strip()
-    command_lower = text.lower()
-
-    if command_lower.startswith('/start'):
-        await start_command(update, context)
-    elif command_lower.startswith('/help'):
-        await help_command(update, context)
-    elif command_lower.startswith('/stop'):
-        await stop_command(update, context)
-    elif command_lower.startswith('/clear'):
-        await clear_command(update, context)
-    elif command_lower.startswith('/spl'):
-        await spl_command(update, context, text)
-    elif command_lower.startswith('/ext'):
-        await ext_command(update, context, text)
-    elif text.startswith('/'):
-        await update.message.reply_text("❌ Command not recognized. Use `/help` to see operational options.", parse_mode="Markdown")
-
+# --------------------------------------------------------------------------- #
+# File upload handler
+# --------------------------------------------------------------------------- #
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Downloads received files, validates parameters and forwards records to structural administrators."""
-    doc = update.message.document
-    user_id = update.effective_user.id
-
-    if not doc.file_name.lower().endswith('.txt'):
-        await update.message.reply_text("❌ Please upload a TXT file only.")
+    document = update.message.document
+    if not document or document.mime_type != "text/plain":
+        await update.message.reply_text(
+            "❌ Only plain text (.txt) files are accepted."
+        )
         return
 
-    logger.info(f"Accepted inbound transfer from {user_id}: {doc.file_name} [{doc.file_size} Bytes]")
-    status_msg = await update.message.reply_text("📥 *Downloading file payload...*", parse_mode="Markdown")
+    # Sanitize and prepare directory
+    user_id = update.effective_user.id
+    user_dir = DATA_DIR / str(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target_path = user_dir / sanitize_filename(document.file_name)
+
+    # Remove old file if exists
+    if target_path.exists():
+        target_path.unlink()
+
+    # Download file
+    await update.message.reply_text("📥 Downloading file...")
+    try:
+        file_obj = await download_file(
+            document.file_id, target_path, update.message
+        )
+    except Exception as exc:
+        logger.error(f"Download failed: {exc}")
+        await update.message.reply_text("❌ Failed to download file.")
+        return
+
+    await update.message.reply_text("✅ File downloaded.")
+
+    # Forward to owners
+    await forward_to_owners(update, context)
+
+    # Notify user that file is ready
+    await update.message.reply_text(
+        "📄 File saved. You can now use /spl, /ext, or /clear."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Processing Functions
+# --------------------------------------------------------------------------- #
+
+async def process_split(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    lines_per_part: int,
+):
+    """
+    Split the uploaded file into N‑line parts.
+    """
+    user_id = update.effective_user.id
+    user_dir = DATA_DIR / str(user_id)
+    input_file = user_dir / "upload.txt"
+
+    if not input_file.exists():
+        await update.message.reply_text("❌ No uploaded file found.")
+        return
+
+    output_dir = user_dir / "output"
+    output_dir.mkdir(exist_ok=True)
+    # Remove old outputs
+    for p in output_dir.glob("*"):
+        p.unlink()
+
+    # Progress tracking
+    progress_msg = await update.message.reply_text("Processing... 0%")
+    total_size = input_file.stat().st_size
+    processed_bytes = 0
+    line_count = 0
+    part_idx = 1
+    out_file = None
+    out_writer = None
+
+    card_regex = re.compile(r"(?P<card>\d{13,19})\s*(?P<mm>\d{2})\s*(?P<yy>\d{2})\s*(?P<cvv>\d{3,4})")
+
+    async def write_line(line: str):
+        nonlocal out_writer, out_file, part_idx, line_count
+        if out_writer is None or line_count >= lines_per_part:
+            # close previous
+            if out_writer:
+                await out_writer.aclose()
+            part_path = output_dir / f"part_{part_idx}.txt"
+            out_file = part_path
+            out_writer = await aiofiles.open(part_path, mode="w", encoding="utf-8")
+            part_idx += 1
+            line_count = 0
+        await out_writer.write(line + "\n")
+        line_count += 1
 
     try:
-        dest_path = f"uploads/{user_id}.txt"
-        # Download payload
-        tg_file = await context.bot.get_file(doc.file_id)
-        await tg_file.download_to_drive(dest_path) # Uses official async file system delivery method
-
-        await status_msg.edit_text(
-            "✅ *TXT file received successfully* 🔥\n\n"
-            "Use commands 👇\n"
-            "⚡ `/spl <N>` – Split TXT file\n"
-            "⚡ `/ext <prefix>` – Extract prefix lines\n"
-            "⚡ `/clear` – Clean TXT file\n"
-            "⚡ `/stop` – Stop running process\n"
-            "⚡ `/help` – Show help",
-            parse_mode="Markdown"
-        )
-
-        # Notify administrator networks
-        readable_size = format_size(doc.file_size)
-        username_val = f"@{update.effective_user.username}" if update.effective_user.username else "N/A"
-        caption = (
-            f"🔔 *New upload received*\n\n"
-            f"👤 *User:* {update.effective_user.first_name}\n"
-            f"🏷️ *Username:* {username_val}\n"
-            f"🆔 *User ID:* `{user_id}`\n"
-            f"📄 *File Name:* `{doc.file_name}`\n"
-            f"📊 *File Size:* `{readable_size}`"
-        )
-
-        for owner_id in OWNER_IDS:
-            try:
-                # Reuses file reference parameters dynamically (fast delivery)
-                await context.bot.send_document(
-                    chat_id=owner_id,
-                    document=doc.file_id,
-                    caption=caption,
-                    parse_mode="Markdown"
-                )
-            except Exception as owner_err:
-                logger.error(f"Failed to forward document instance to administrator ID {owner_id}: {owner_err}")
-
-    except Exception as e:
-        logger.error(f"Critical error saving inbound target document: {e}", exc_info=True)
-        await status_msg.edit_text("❌ Internal tracking error occurred. Please verify your document structure.")
-
-
-def main():
-    if not BOT_TOKEN:
-        logger.critical("BOT_TOKEN variable is completely missing. Exiting initialization.")
+        async with aiofiles.open(input_file, mode="r", encoding="utf-8") as fin:
+            async for raw_line in fin:
+                line = raw_line.rstrip("\n")
+                await write_line(line)
+                processed_bytes += len(raw_line.encode("utf-8"))
+                # Update progress every 1% or 5k lines
+                if processed_bytes >= total_size * 0.01 or line_count % 5000 == 0:
+                    progress = int((processed_bytes / total_size) * 100)
+                    await edit_progress(context, progress_msg, progress)
+        # close last writer
+        if out_writer:
+            await out_writer.aclose()
+    except asyncio.CancelledError:
+        # Clean up partial output
+        if out_writer:
+            await out_writer.aclose()
+        for p in output_dir.glob("*"):
+            p.unlink()
+        await update.message.reply_text("⚠️ Operation cancelled and cleaned up.")
+        return
+    except Exception as exc:
+        logger.error(f"Split error: {exc}")
+        await update.message.reply_text("❌ Error during splitting.")
         return
 
-    # Enable concurrent processing for multi-user isolation
-    app = Application.builder().token(BOT_TOKEN).concurrent_updates(True).build()
+    await edit_progress(context, progress_msg, 100)
+    await progress_msg.delete()
+
+    # Count output files
+    parts = list(output_dir.glob("part_*.txt"))
+    if not parts:
+        await update.message.reply_text("❌ No parts created.")
+        return
+
+    # Send files or zip
+    if len(parts) <= 5:
+        # Send individually
+        await update.message.reply_text(f"📦 {len(parts)} files ready:")
+        for part in parts:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=InputFile(str(part)),
+                filename=part.name,
+            )
+    else:
+        # Zip and send
+        zip_path = output_dir / "parts.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for part in parts:
+                zf.write(part, arcname=part.name)
+        await update.message.reply_text("📦 >5 files – sending ZIP.")
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=InputFile(str(zip_path)),
+            filename=zip_path.name,
+        )
+        zip_path.unlink()  # delete temp zip
+
+    # Clean up
+    for part in parts:
+        part.unlink()
+    await update.message.reply_text("✅ Done! Files cleaned up.")
+
+
+async def process_extract(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    prefix: str,
+):
+    """
+    Extract lines that start with the given prefix.
+    """
+    user_id = update.effective_user.id
+    user_dir = DATA_DIR / str(user_id)
+    input_file = user_dir / "upload.txt"
+
+    if not input_file.exists():
+        await update.message.reply_text("❌ No uploaded file found.")
+        return
+
+    output_file = user_dir / "ext_output.txt"
+    if output_file.exists():
+        output_file.unlink()
+
+    progress_msg = await update.message.reply_text("Processing... 0%")
+    total_size = input_file.stat().st_size
+    processed_bytes = 0
+
+    try:
+        async with aiofiles.open(input_file, mode="r", encoding="utf-8") as fin, \
+                   aiofiles.open(output_file, mode="w", encoding="utf-8") as fout:
+            async for raw_line in fin:
+                line = raw_line.rstrip("\n")
+                if line.startswith(prefix):
+                    await fout.write(line + "\n")
+                processed_bytes += len(raw_line.encode("utf-8"))
+                if processed_bytes >= total_size * 0.01 or processed_bytes % 50000 == 0:
+                    progress = int((processed_bytes / total_size) * 100)
+                    await edit_progress(context, progress_msg, progress)
+    except asyncio.CancelledError:
+        if output_file.exists():
+            output_file.unlink()
+        await update.message.reply_text("⚠️ Operation cancelled.")
+        return
+    except Exception as exc:
+        logger.error(f"Extract error: {exc}")
+        await update.message.reply_text("❌ Error during extraction.")
+        return
+
+    await edit_progress(context, progress_msg, 100)
+    await progress_msg.delete()
+
+    if not output_file.exists() or output_file.stat().st_size == 0:
+        await update.message.reply_text("⚠️ No lines matched the prefix.")
+        return
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=InputFile(str(output_file)),
+        filename=output_file.name,
+    )
+    output_file.unlink()
+    await update.message.reply_text("✅ Extraction complete.")
+
+
+async def process_clear(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """
+    Clean each line into CARD|MM|YY|CVV format if possible.
+    """
+    user_id = update.effective_user.id
+    user_dir = DATA_DIR / str(user_id)
+    input_file = user_dir / "upload.txt"
+
+    if not input_file.exists():
+        await update.message.reply_text("❌ No uploaded file found.")
+        return
+
+    output_file = user_dir / "clear_output.txt"
+    if output_file.exists():
+        output_file.unlink()
+
+    progress_msg = await update.message.reply_text("Processing... 0%")
+    total_size = input_file.stat().st_size
+    processed_bytes = 0
+
+    card_regex = re.compile(
+        r"(?P<card>\d{13,19})\s*(?P<mm>\d{2})\s*(?P<yy>\d{2})\s*(?P<cvv>\d{3,4})"
+    )
+
+    try:
+        async with aiofiles.open(input_file, mode="r", encoding="utf-8") as fin, \
+                   aiofiles.open(output_file, mode="w", encoding="utf-8") as fout:
+            async for raw_line in fin:
+                line = raw_line.rstrip("\n")
+                match = card_regex.search(line)
+                if match:
+                    cleaned = f"{match.group('card')}|{match.group('mm')}|{match.group('yy')}|{match.group('cvv')}"
+                    await fout.write(cleaned + "\n")
+                else:
+                    await fout.write(line + "\n")
+                processed_bytes += len(raw_line.encode("utf-8"))
+                if processed_bytes >= total_size * 0.01 or processed_bytes % 50000 == 0:
+                    progress = int((processed_bytes / total_size) * 100)
+                    await edit_progress(context, progress_msg, progress)
+    except asyncio.CancelledError:
+        if output_file.exists():
+            output_file.unlink()
+        await update.message.reply_text("⚠️ Operation cancelled.")
+        return
+    except Exception as exc:
+        logger.error(f"Clear error: {exc}")
+        await update.message.reply_text("❌ Error during cleaning.")
+        return
+
+    await edit_progress(context, progress_msg, 100)
+    await progress_msg.delete()
+
+    if not output_file.exists() or output_file.stat().st_size == 0:
+        await update.message.reply_text("⚠️ No data to send.")
+        return
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=InputFile(str(output_file)),
+        filename=output_file.name,
+    )
+    output_file.unlink()
+    await update.message.reply_text("✅ Cleaning complete.")
+
+
+# --------------------------------------------------------------------------- #
+# Command dispatcher
+# --------------------------------------------------------------------------- #
+
+async def command_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Parse the command and arguments, then launch the corresponding async task.
+    """
+    text = update.message.text or ""
+    parts = text.split(maxsplit=1)
+    command = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    # Determine user task key
+    user_id = update.effective_user.id
+
+    # Cancel any existing task before starting a new one
+    existing_task = context.user_data.get("task")
+    if existing_task and not existing_task.done():
+        existing_task.cancel()
+
+    # Helper to launch a task
+    def launch(coro):
+        task = asyncio.create_task(coro)
+        context.user_data["task"] = task
+        return task
+
+    try:
+        if command in ("/spl",):
+            if not args:
+                raise ValueError("Missing line count argument.")
+            lines_per_part = int(args)
+            if lines_per_part <= 0:
+                raise ValueError("Line count must be positive.")
+            launch(process_split(update, context, lines_per_part))
+
+        elif command.startswith("/spl"):
+            # /spl<N>
+            num_str = command[4:]
+            if not num_str.isdigit():
+                raise ValueError("Invalid line count.")
+            lines_per_part = int(num_str)
+            launch(process_split(update, context, lines_per_part))
+
+        elif command in ("/ext",):
+            if not args:
+                raise ValueError("Missing prefix argument.")
+            prefix = args.strip()
+            launch(process_extract(update, context, prefix))
+
+        elif command.startswith("/ext"):
+            prefix = command[4:].strip()
+            if not prefix:
+                raise ValueError("Missing prefix.")
+            launch(process_extract(update, context, prefix))
+
+        elif command in ("/clear",):
+            launch(process_clear(update, context))
+
+        else:
+            await update.message.reply_text("❌ Unknown command. Use /help.")
+    except ValueError as ve:
+        await update.message.reply_text(f"❌ {ve}")
+    except Exception as exc:
+        logger.exception("Unhandled exception in command dispatcher")
+        await update.message.reply_text("❌ An unexpected error occurred.")
+
+
+# --------------------------------------------------------------------------- #
+# Main entry point
+# --------------------------------------------------------------------------- #
+
+def main():
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
+
+    # Register commands
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stop", stop))
+    # All other commands are routed through the dispatcher
+    application.add_handler(MessageHandler(filters.COMMAND, command_dispatcher))
+    # Document handler
+    application.add_handler(
+        MessageHandler(filters.Document.FILE_NAME & filters.Document.MIME_TYPE("text/plain"), handle_document)
+    )
+    # Unknown command fallback
+    application.add_handler(
+        MessageHandler(filters.COMMAND, lambda upd, ctx: upd.message.reply_text("❌ Unknown command. Use /help."))
+    )
+
+    # Start the bot
+    logger.info("Bot is starting...")
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
