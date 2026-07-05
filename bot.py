@@ -120,19 +120,14 @@ async def clear_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output_path = Path(f"{user_id}_clean.txt")
     _ensure_dir(output_path)
 
-    cleaned_lines = []
-    with open(input_path, "r", encoding="utf-8") as f:
-        for line in f:
-            parts = line.strip().split("|")
-            if len(parts) >= 4:
-                # Keep exactly the first 4 parts, re‑join with '|'
-                cleaned_lines.append("|".join(part.strip() for part in parts[:4]))
-            else:
-                # If there are fewer than 4 parts, keep the line as is
-                cleaned_lines.append(line.strip())
+    with open(input_path, "r", encoding="utf-8") as f, \
+     open(output_path, "w", encoding="utf-8") as out:
 
-    with open(output_path, "w", encoding="utf-8") as out:
-        out.write("\n".join(cleaned_lines))
+    for line in f:
+        parts = line.strip().split("|")
+
+        if len(parts) >= 4:
+            out.write("|".join(parts[:4]) + "\n")
 
     with open(output_path, "rb") as out:
         await update.message.reply_document(out)
