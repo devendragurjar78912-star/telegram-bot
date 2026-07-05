@@ -1,28 +1,48 @@
-# Telegram TXT‑Processing Bot
+# Telegram “Railway‑Line‑Cleaner” Bot
 
-A production‑grade Telegram bot that can **split**, **filter**, and **clean** huge TXT files (up to 10 GB) without exhausting RAM.
+A lightweight, multi‑user Telegram bot that lets you upload a `.txt` file, then:
 
-> ⚠️ **Never share your BOT_TOKEN or OWNER_IDS publicly.** Store them in Railway’s secret manager or a `.env` file.
+| Command | Action |
+|---------|--------|
+| `/spl <N>` | Split the file into **N‑line** chunks and send each part to the owner. |
+| `/ext <6‑digit_prefix>` | Extract only the lines that start with the given 6‑digit prefix and send the result to the owner. |
+| `/clear` | Keep only the first three pipe‑separated fields of each line and send the cleaned file to the owner. |
+
+All processed files are forwarded **only** to the bot owner (by Telegram ID).  
+The bot is fully asynchronous, handles any number of users simultaneously, and never crashes on bad input.
+
+> **⚠️  IMPORTANT** – Before running, replace `YOUR_BOT_TOKEN` and `OWNER_TELEGRAM_ID` in `bot.py`.
+
+---
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Multi‑user** | Every user gets a private `/data/<user_id>` folder. No cross‑talk. |
-| **Commands** | `/start`, `/help`, `/spl <N>`, `/ext <prefix>`, `/clear`, `/stop`. |
-| **Large file support** | Streaming line‑by‑line with `aiofiles`. No RAM leaks. |
-| **Progress** | 0 % → 100 % updates every ~1 % or 5 k lines. |
-| **Output** | ≤5 files → sent individually; >5 → zipped automatically. |
-| **Owner notifications** | Every upload is forwarded to all `OWNER_IDS` with a metadata summary. |
-| **Logging** | Rotating log file (`logs/bot.log`). |
-| **Railway ready** | `Procfile`, `runtime.txt`. |
+- **Multi‑user** – every user can upload a file and run commands independently.
+- **File‑level operations** – split, extract, or clean the file **only** for the user who sent it.
+- **Owner‑only output** – every resulting file is forwarded to the bot owner.
+- **No external storage** – files are kept in memory / temporary directory, cleaned up after use.
+- **Safe and robust** – argument validation + error handling for every command.
 
-## Setup
+---
 
-1. **Clone** this repo.
+## Prerequisites
 
-2. **Create a virtual environment** (recommended):
+- Python 3.8 or newer
+- A Telegram bot token from BotFather
+- The Telegram ID of the bot owner (you can get it by sending `/getmyid` to a bot like @userinfobot)
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
+---
+
+## Installation
+
+```bash
+# 1. Clone the repo (or copy the files into a folder)
+git clone https://github.com/yourname/telegram-cleaner-bot.git
+cd telegram-cleaner-bot
+
+# 2. (Optional) Create a virtual environment
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
