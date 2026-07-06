@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -73,23 +73,7 @@ if not OWNER_IDS:
 ACTIVE_TASKS = {}
 
 # --------------------------------------------------------
-# 3. KEYBOARD DEFINITIONS
-# --------------------------------------------------------
-START_KEYBOARD = ReplyKeyboardMarkup(
-    [[KeyboardButton("🚀 Start")]],
-    resize_keyboard=True
-)
-
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton("📂 Spl Command"), KeyboardButton("🧹 Clear Command")],
-        [KeyboardButton("⚡ Ext BIN Command"), KeyboardButton("💡 Info")]
-    ],
-    resize_keyboard=True
-)
-
-# --------------------------------------------------------
-# 4. HELPER UTILITIES
+# 3. HELPER UTILITIES
 # --------------------------------------------------------
 async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_source=None):
     """Safely relays messages and files to all verified owner IDs."""
@@ -130,95 +114,33 @@ async def pre_scan_file_metrics(input_path: str, mode: str, param=None):
     return total_lines, matching_lines
 
 # --------------------------------------------------------
-# 5. BOT INTERFACE COMMAND & BUTTON HANDLERS
+# 4. BOT COMMAND HANDLERS
 # --------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Responds to /start by initializing user options and showing the Start button keyboard."""
+    """Responds to /start by resetting parameters and displaying a welcome page."""
     context.user_data.clear()
     welcome_text = (
-        "👋 **Welcome to the Professional TXT Processing Bot!**\n\n"
-        "I am fully optimized for fast, non-blocking, multi-user line manipulation.\n\n"
-        "Press the **🚀 Start** button below to initialize your command options matrix layout."
+        "👋 **Welcome to the Production TXT Processing Bot!**\n\n"
+        "I am fully optimized for non-blocking, multi-user file manipulation.\n\n"
+        "⚡ **Get started by choosing a configuration mode:**\n"
+        "🔸 `/spl<number>` — Split text files by lines (e.g., `/spl1000`)\n"
+        "🔸 `/ext<prefix>` — Filter rows matching a specific prefix (e.g., `/ext6390`)\n"
+        "🔸 `/clear` — Keep only the first 4 fields separated by vertical pipes (`|`)\n"
+        "🔸 `/stop` — Abort any running file execution instantly\n\n"
+        "💡 *Configure a mode first, then upload your target text file.*"
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=START_KEYBOARD)
-
-async def keyboard_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Switches layout instantly to the permanent professional processing dashboard grid."""
-    transition_text = (
-        "⚙️ **Dashboard Matrix Initialized!**\n\n"
-        "Select an action button from the control panel grid layout below to view details and instruction templates."
-    )
-    await update.message.reply_text(transition_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_spl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays functional text guidelines for running data payload partitioning requests."""
-    spl_text = (
-        "Send command like:\n\n"
-        "`/spl100`\n\n"
-        "Example:\n"
-        "`/spl500`\n"
-        "`/spl1000`\n\n"
-        "Then upload your TXT file."
-    )
-    await update.message.reply_text(spl_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_clear_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays visual examples regarding formatting configurations for card parsing structures."""
-    clear_text = (
-        "Send:\n\n"
-        "`/clear`\n\n"
-        "Then upload your TXT file.\n\n"
-        "The bot will keep only:\n\n"
-        "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Examples:\n\n"
-        "1234567890123456|12|28|123|John|Delhi\n"
-        "↓\n"
-        "`1234567890123456|12|28|123`\n\n"
-        "and\n\n"
-        "1234567890123456|12|2028|123|John|Delhi\n"
-        "↓\n"
-        "`1234567890123456|12|2028|123`"
-    )
-    await update.message.reply_text(clear_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_ext_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays explicit instructions on utilizing extraction regex rules dynamically."""
-    ext_text = (
-        "Send command like:\n\n"
-        "`/ext6390`\n\n"
-        "Then upload your TXT file.\n\n"
-        "The bot will extract only matching BINs."
-    )
-    await update.message.reply_text(ext_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Renders comprehensive documentation concerning operational runtime codes."""
-    info_text = (
-        "📖 **Available Commands**\n\n"
-        "📂 `/spl<number>`\n\n"
-        "Split TXT into parts.\n\n"
-        "Example:\n"
-        "`/spl100`\n"
-        "creates files with 100 lines each.\n\n"
-        "--------------------------\n\n"
-        "🧹 `/clear`\n\n"
-        "Keeps only\n"
-        "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Removes every extra field.\n\n"
-        "--------------------------\n\n"
-        "⚡ `/extBIN`\n\n"
-        "Extracts only matching BIN.\n\n"
-        "Example:\n"
-        "`/ext6390`\n\n"
-        "--------------------------\n\n"
-        "⛔ `/stop`\n\n"
-        "Stops current processing immediately."
-    )
-    await update.message.reply_text(info_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Alternative standard direct trigger command hook targeting help references."""
-    await button_info_handler(update, context)
+    """Displays user guides, execution rules, and processing operational modes."""
+    help_text = (
+        "📖 **Operational Guide & Bot Commands**\n\n"
+        "1️⃣ **Split Files:** `/spl1000` sets your profile to divide incoming text files into sections containing up to 1000 lines each.\n\n"
+        "2️⃣ **Extract Lines:** `/ext54` sets your profile to extract lines that explicitly match the prefix `54` at the very start.\n\n"
+        "3️⃣ **Clear Rows:** `/clear` sets your profile to slice data rows. It scans every line containing pipe characters (`|`) and completely drops everything beyond the 4th field. Unmatched rows are left unaltered.\n\n"
+        "4️⃣ **Stop Stream:** `/stop` forcefully cancels execution loops assigned to your user account instantly."
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def spl_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Parses dynamic arguments derived from custom split pattern triggers."""
@@ -229,26 +151,26 @@ async def spl_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             raise ValueError()
         context.user_data["mode"] = "split"
         context.user_data["param"] = lines_count
-        await update.message.reply_text(f"✅ **Configuration Active:** File Split Mode (`{lines_count}` lines per file). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(f"✅ **Configuration Active:** File Split Mode (`{lines_count}` lines per file). Please upload your `.txt` document.")
     except Exception:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please define a positive integer. Example: `/spl100`", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("❌ **Invalid Parameter:** Please define a positive integer. Example: `/spl1000`")
 
 async def ext_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Configures prefix text match filters based on the incoming text command suffix."""
     text = update.message.text.strip()
     prefix_val = text[4:]
     if not prefix_val:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please supply an explicit prefix sequence. Example: `/ext6390`", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("❌ **Invalid Parameter:** Please supply an explicit prefix sequence. Example: `/ext6390`")
         return
     context.user_data["mode"] = "extract"
     context.user_data["param"] = prefix_val
-    await update.message.reply_text(f"✅ **Configuration Active:** Extraction Mode (Prefix: `{prefix_val}`). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text(f"✅ **Configuration Active:** Extraction Mode (Prefix: `{prefix_val}`). Please upload your `.txt` document.")
 
 async def clear_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sets user active pipeline parsing parameters to strict 4-field column validation rules."""
     context.user_data["mode"] = "clear"
     context.user_data["param"] = None
-    await update.message.reply_text("✅ **Configuration Active:** Pipe Cleaning Mode (Keeps the first 4 fields only). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text("✅ **Configuration Active:** Pipe Cleaning Mode (Keeps the first 4 fields only). Please upload your `.txt` document.")
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Locates any currently running user job and executes a cooperative task cancel loop."""
@@ -256,12 +178,12 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in ACTIVE_TASKS:
         task = ACTIVE_TASKS[user_id]
         task.cancel()
-        await update.message.reply_text("🛑 **Cancellation signal transmitted.** Terminating operations now...", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("🛑 **Cancellation signal transmitted.** Terminating operations now...")
     else:
-        await update.message.reply_text("ℹ️ You have no active file streams running right now.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("ℹ️ You have no active file streams running right now.")
 
 # --------------------------------------------------------
-# 6. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
+# 5. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
 # --------------------------------------------------------
 async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, original_name: str, mode: str, param):
     """Core text processing logic. Executes line-by-line using low-memory asynchronous handles."""
@@ -272,7 +194,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_lines, matching_lines = await pre_scan_file_metrics(input_path, mode, param)
 
     if total_lines == 0:
-        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
         return
 
     # Step 2: Send mode-specific progress summary message blocks
@@ -285,14 +207,14 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📦 Lines Per Part: {chunk_size}\n"
             f"📂 Total Parts: {total_parts}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     elif mode == "clear":
         progress_msg = (
             "🚀 Cleaning Started...\n\n"
             f"📄 Total Lines: {total_lines}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     elif mode == "extract":
         progress_msg = (
@@ -301,7 +223,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📄 Total Lines: {total_lines}\n"
             f"📄 Matching Lines: {matching_lines}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     # Step 3: Run execution blocks asynchronously
     # ----------------- MODE: CLEAR PIPELINE -----------------
@@ -328,12 +250,13 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         sent_files_tracker.append(out_path)
         
+        # Output clear specific post-completion text block
         completion_msg = (
             "✅ Cleaning Completed\n\n"
             f"📄 Total Lines: {total_lines}\n"
             f"📄 Output Lines: {output_lines_count}"
         )
-        await update.message.reply_text(completion_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(completion_msg)
 
     # ----------------- MODE: EXTRACT PIPELINE -----------------
     elif mode == "extract":
@@ -392,15 +315,14 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 output_bytes = await f.read()
             await update.message.reply_document(
                 document=output_bytes,
-                filename=os.path.basename(output_file),
-                reply_markup=MAIN_KEYBOARD
+                filename=os.path.basename(output_file)
             )
             await asyncio.sleep(0.3)
         else:
-            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no data matching your parameters.", reply_markup=MAIN_KEYBOARD)
+            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no data matching your parameters.")
 
 # --------------------------------------------------------
-# 7. INCOMING FILE DISPATCH HANDLER
+# 6. INCOMING FILE DISPATCH HANDLER
 # --------------------------------------------------------
 async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Validates document payloads, verifies configurations, and boots task execution environments."""
@@ -409,17 +331,17 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
     document = update.message.document
 
     if not document.file_name.lower().endswith(".txt"):
-        await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.")
         return
 
     mode_type = context.user_data.get("mode")
     mode_param = context.user_data.get("param")
     if not mode_type:
-        await update.message.reply_text("⚠️ **Configuration Required:** Set an action using `/spl`, `/ext`, or `/clear` before transmitting your text files.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("⚠️ **Configuration Required:** Set an action using `/spl`, `/ext`, or `/clear` before transmitting your text files.")
         return
 
     if user_id in ACTIVE_TASKS:
-        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.")
         return
 
     user_uploads_path = UPLOADS_DIR / str(user_id)
@@ -428,12 +350,13 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
     user_outputs_path.mkdir(parents=True, exist_ok=True)
 
     local_input_file = user_uploads_path / f"{document.file_id}.txt"
-    status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.", reply_markup=MAIN_KEYBOARD)
+    status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.")
 
     try:
         tg_file = await context.bot.get_file(document.file_id)
         await tg_file.download_to_drive(custom_path=local_input_file)
 
+        # Modified owner notification system to match specific requested metrics
         username_str = f"@{user.username}" if user.username else "None"
         current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
         
@@ -456,3 +379,57 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         worker_routine = process_file_stream(
             update, context, str(local_input_file), user_outputs_path, document.file_name, mode_type, mode_param
         )
+        task = asyncio.create_task(worker_routine)
+        ACTIVE_TASKS[user_id] = task
+
+        await task
+
+    except asyncio.CancelledError:
+        logger.info(f"User {user_id} cancelled ongoing execution pipeline processing.")
+        await update.message.reply_text("❌ **Operation Halted:** Processing loop explicitly broken by user command.")
+    except Exception as err:
+        logger.error(f"Execution tracking crash on user input {user_id}: {err}", exc_info=True)
+        await update.message.reply_text("⚠️ **System Error:** Failed to process your document. Ensure formatting rules match standard conventions.")
+    finally:
+        if user_id in ACTIVE_TASKS:
+            del ACTIVE_TASKS[user_id]
+
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        if local_input_file.exists():
+            os.remove(local_input_file)
+        if user_outputs_path.exists():
+            shutil.rmtree(user_outputs_path, ignore_errors=True)
+
+async def rejected_files_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Informs users about incompatible document media variants transmitted across queues."""
+    await update.message.reply_text("❌ **File Rejected:** Unsupported payload formatting. Provide valid configuration-compatible `.txt` extensions only.")
+
+# --------------------------------------------------------
+# 7. BOT APPLICATION BOOTSTRAP INITIALIZER
+# --------------------------------------------------------
+def main():
+    """Initializes execution threads and registers active operational message routing states."""
+    logger.info("Initializing Application Framework Components...")
+    
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("clear", clear_config_handler))
+    app.add_handler(CommandHandler("stop", stop_command))
+
+    app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), spl_config_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^/ext.+$"), ext_config_handler))
+
+    app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.TXT, rejected_files_handler))
+
+    logger.info("Application context fully updated. Starting standard long-polling worker thread loop...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
