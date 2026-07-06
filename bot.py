@@ -94,3 +94,54 @@ processing = defaultdict(bool)
 stop_flags = defaultdict(bool)
 
 print("Bot Base Loaded Successfully...")
+# ==========================
+# /start
+# ==========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Telegram TXT Bot Online\n\n"
+        "Upload any TXT file.\n\n"
+        "Commands:\n"
+        "/help"
+    )
+
+
+# ==========================
+# /help
+# ==========================
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        """
+Available Commands
+
+/start
+
+/help
+
+/spl1000
+
+/ext4960
+
+/clear
+
+/stop
+"""
+    )
+
+
+# ==========================
+# BOT START
+# ==========================
+
+app = Application.builder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+
+app.add_handler(CommandHandler("help", help_command))
+
+print("Bot Online...")
+
+app.run_polling()
