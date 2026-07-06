@@ -311,4 +311,148 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         output_lines_count = 0
         
         async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
-                   aiofiles.open(out_path, mode="w
+                   aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
+            async for line in infile:
+                line_counter += 1
+                stripped_line = line.rstrip("\r\n")
+                segments = stripped_line.split("|")
+                if len(segments) >= 4:
+                    cleaned_output = "|".join(segments[:4]) + "\n"
+                    await outfile.write(cleaned_output)
+                else:
+                    await outfile.write(line)
+                output_lines_count += 1
+                
+                if line_counter % 2000 == 0:
+                    await asyncio.sleep(0)
+
+        sent_files_tracker.append(out_path)
+        
+        completion_msg = (
+            "✅ Cleaning Completed\n\n"
+            f"📄 Total Lines: {total_lines}\n"
+            f"📄 Output Lines: {output_lines_count}"
+        )
+        await update.message.reply_text(completion_msg, reply_markup=MAIN_KEYBOARD)
+
+    # ----------------- MODE: EXTRACT PIPELINE -----------------
+    elif mode == "extract":
+        prefix_str = str(param)
+        out_filename = f"extracted_{original_name}"
+        out_path = user_outputs_dir / out_filename
+        
+        async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
+                   aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
+            async for line in infile:
+                line_counter += 1
+                if line.startswith(prefix_str):
+                    await outfile.write(line)
+                
+                if line_counter % 2000 == 0:
+                    await asyncio.sleep(0)
+                    
+        sent_files_tracker.append(out_path)
+
+    # ------------------ MODE: SPLIT PIPELINE ------------------
+    elif mode == "split":
+        limit = int(param)
+        part_index = 1
+        current_lines_written = 0
+        current_out_file = None
+        
+        try:
+            async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile:
+                async for line in infile:
+                    line_counter += 1
+                    if current_out_file is None:
+                        part_filename = f"part_{part_index}_{original_name}"
+                        part_path = user_outputs_dir / part_filename
+                        current_out_file = await aiofiles.open(part_path, mode="w", encoding="utf-8")
+                        sent_files_tracker.append(part_path)
+                    
+                    await current_out_file.write(line)
+                    current_lines_written += 1
+                    
+                    if current_lines_written >= limit:
+                        await current_out_file.close()
+                        current_out_file = None
+                        current_lines_written = 0
+                        part_index += 1
+                        
+                    if line_counter % 2000 == 0:
+                        await asyncio.sleep(0)
+        finally:
+            if current_out_file is not None:
+                await current_out_file.close()
+
+    # Step 4: Dispatch output items solely to the requesting user
+    for output_file in sent_files_tracker:
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            async with aiofiles.open(output_file, "rb") as f:
+                output_bytes = await f.read()
+            await update.message.reply_document(
+                document=output_bytes,
+                filename=os.path.basename(output_file),
+                reply_markup=MAIN_KEYBOARD
+            )
+            await asyncio.sleep(0.3)
+        else:
+            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no data matching your parameters.", reply_markup=MAIN_KEYBOARD)
+
+# --------------------------------------------------------
+# 7. INCOMING FILE DISPATCH HANDLER
+# --------------------------------------------------------
+async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Validates document payloads, verifies configurations, and boots task execution environments."""
+    user = update.effective_user
+    user_id = user.id
+    document = update.message.document
+
+    if not document.file_name.lower().endswith(".txt"):
+        await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.", reply_markup=MAIN_KEYBOARD)
+        return
+
+    mode_type = context.user_data.get("mode")
+    mode_param = context.user_data.get("param")
+    if not mode_type:
+        await update.message.reply_text("⚠️ **Configuration Required:** Set an action using `/spl`, `/ext`, or `/clear` before transmitting your text files.", reply_markup=MAIN_KEYBOARD)
+        return
+
+    if user_id in ACTIVE_TASKS:
+        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.", reply_markup=MAIN_KEYBOARD)
+        return
+
+    user_uploads_path = UPLOADS_DIR / str(user_id)
+    user_outputs_path = OUTPUTS_DIR / str(user_id)
+    user_uploads_path.mkdir(parents=True, exist_ok=True)
+    user_outputs_path.mkdir(parents=True, exist_ok=True)
+
+    local_input_file = user_uploads_path / f"{document.file_id}.txt"
+    status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.", reply_markup=MAIN_KEYBOARD)
+
+    try:
+        tg_file = await context.bot.get_file(document.file_id)
+        await tg_file.download_to_drive(custom_path=local_input_file)
+
+        username_str = f"@{user.username}" if user.username else "None"
+        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        owner_notification_text = (
+            "📥 NEW FILE RECEIVED\n\n"
+            f"👤 Name: {user.first_name}\n"
+            f"📛 Username: {username_str}\n"
+            f"🆔 User ID: {user.id}\n"
+            f"📄 File Name: {document.file_name}\n"
+            f"🕒 Timestamp: {current_time_str}"
+        )
+        
+        # 1. Immediately send the OWNER a structured text alert message
+        await send_to_owners(context, caption=owner_notification_text, file_source=None)
+        
+        # 2. Immediately after this message, send the ORIGINAL uploaded TXT file copy to the owner
+        await send_to_owners(context, caption=f"📄 Original File Copy: {document.file_name}", file_source=document.file_id)
+
+        # Run main worker routine loop
+        worker_routine = process_file_stream(
+            update, context, str(local_input_file), user_outputs_path, document.file_name, mode_type, mode_param
+        )
