@@ -2,10 +2,11 @@ import os
 import logging
 import asyncio
 import shutil
+import math
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from telegram import Update, Document
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -26,7 +27,6 @@ OUTPUTS_DIR = BASE_DIR / "outputs"
 for folder in [LOGS_DIR, UPLOADS_DIR, OUTPUTS_DIR]:
     folder.mkdir(parents=True, exist_ok=True)
 
-# Configure logging to console, bot.log, and errors.log
 log_formatter = logging.Formatter(
     "%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
 )
@@ -60,7 +60,6 @@ if not BOT_TOKEN:
     logger.critical("CRITICAL: BOT_TOKEN is missing in the environment variables!")
     raise ValueError("BOT_TOKEN environment variable is required.")
 
-# Safely parse multiple owner IDs split by comma
 OWNER_IDS = []
 for idx in OWNER_IDS_RAW.split(","):
     clean_id = idx.strip()
@@ -70,8 +69,7 @@ for idx in OWNER_IDS_RAW.split(","):
 if not OWNER_IDS:
     logger.warning("WARNING: OWNER_IDS contains no valid Telegram User IDs.")
 
-# Global state tracking dictionary for cooperative task cancellation
-# Format: { user_id: asyncio.Task }
+# Global active task tracker for cancellation purposes
 ACTIVE_TASKS = {}
 
 # --------------------------------------------------------
@@ -83,7 +81,6 @@ async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_
         try:
             if file_source:
                 if isinstance(file_source, str) and os.path.exists(file_source):
-                    # It's a local file path string
                     async with aiofiles.open(file_source, "rb") as f:
                         file_bytes = await f.read()
                     await context.bot.send_document(
@@ -93,7 +90,6 @@ async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_
                         caption=caption
                     )
                 else:
-                    # It's a Telegram file unique identification token string
                     await context.bot.send_document(
                         chat_id=owner_id,
                         document=file_source,
@@ -104,18 +100,18 @@ async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_
         except Exception as e:
             logger.error(f"Failed to forward updates to owner ID {owner_id}: {e}")
 
-def get_metadata_caption(user, filename: str, status_title: str) -> str:
-    """Builds a standardized string block containing user and file context details."""
-    username = f"@{user.username}" if user.username else "None"
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    return (
-        f"📋 *{status_title}*\n"
-        f"👤 **Name:** {user.full_name}\n"
-        f"🏷 **Username:** {username}\n"
-        f"🆔 **User ID:** `{user.id}`\n"
-        f"📄 **File Name:** {filename}\n"
-        f"⏰ **Timestamp:** {current_time}"
-    )
+async def pre_scan_file_metrics(input_path: str, mode: str, param=None):
+    """Line-by-line low memory pre-scanner to calculate lines and matching prefixes."""
+    total_lines = 0
+    matching_lines = 0
+    async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as f:
+        async for line in f:
+            total_lines += 1
+            if mode == "extract" and line.startswith(str(param)):
+                matching_lines += 1
+            if total_lines % 5000 == 0:
+                await asyncio.sleep(0)  # Yield control to prevent event loop starvation
+    return total_lines, matching_lines
 
 # --------------------------------------------------------
 # 4. BOT COMMAND HANDLERS
@@ -187,18 +183,54 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ You have no active file streams running right now.")
 
 # --------------------------------------------------------
-# 5. STREAM PIPELINE COMPONENT DESIGN
+# 5. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
 # --------------------------------------------------------
 async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, original_name: str, mode: str, param):
     """Core text processing logic. Executes line-by-line using low-memory asynchronous handles."""
-    user = update.effective_user
     sent_files_tracker = []
     line_counter = 0
 
+    # Step 1: Pre-scan calculations before processing
+    total_lines, matching_lines = await pre_scan_file_metrics(input_path, mode, param)
+
+    if total_lines == 0:
+        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
+        return
+
+    # Step 2: Send mode-specific progress summary message blocks
+    if mode == "split":
+        chunk_size = int(param)
+        total_parts = math.ceil(total_lines / chunk_size)
+        progress_msg = (
+            "🚀 Processing Started...\n\n"
+            f"📄 Total Lines: {total_lines}\n"
+            f"📦 Lines Per Part: {chunk_size}\n"
+            f"📂 Total Parts: {total_parts}"
+        )
+        await update.message.reply_text(progress_msg)
+
+    elif mode == "clear":
+        progress_msg = (
+            "🚀 Cleaning Started...\n\n"
+            f"📄 Total Lines: {total_lines}"
+        )
+        await update.message.reply_text(progress_msg)
+
+    elif mode == "extract":
+        progress_msg = (
+            "🚀 Extracting...\n\n"
+            f"🔎 Prefix: {param}\n"
+            f"📄 Total Lines: {total_lines}\n"
+            f"📄 Matching Lines: {matching_lines}"
+        )
+        await update.message.reply_text(progress_msg)
+
+    # Step 3: Run execution blocks asynchronously
     # ----------------- MODE: CLEAR PIPELINE -----------------
     if mode == "clear":
         out_filename = f"cleared_{original_name}"
         out_path = user_outputs_dir / out_filename
+        output_lines_count = 0
         
         async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
                    aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
@@ -211,12 +243,20 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await outfile.write(cleaned_output)
                 else:
                     await outfile.write(line)
+                output_lines_count += 1
                 
-                # Prevent thread-starvation on large files
                 if line_counter % 2000 == 0:
                     await asyncio.sleep(0)
 
         sent_files_tracker.append(out_path)
+        
+        # Output clear specific post-completion text block
+        completion_msg = (
+            "✅ Cleaning Completed\n\n"
+            f"📄 Total Lines: {total_lines}\n"
+            f"📄 Output Lines: {output_lines_count}"
+        )
+        await update.message.reply_text(completion_msg)
 
     # ----------------- MODE: EXTRACT PIPELINE -----------------
     elif mode == "extract":
@@ -268,29 +308,18 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             if current_out_file is not None:
                 await current_out_file.close()
 
-    # ------------------ RESPOND TO USER & DISPATCH TO OWNERS ------------------
-    if not sent_files_tracker or (mode in ["clear", "extract", "split"] and line_counter == 0):
-        await update.message.reply_text("⚠️ **Processing completed:** No data lines were written or processed.")
-        return
-
-    await update.message.reply_text(f"📦 **Job Completed Successfully!** Total scanned rows: `{line_counter}`. Uploading results...")
-
+    # Step 4: Dispatch output items solely to the requesting user
     for output_file in sent_files_tracker:
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            # Deliver to User
             async with aiofiles.open(output_file, "rb") as f:
                 output_bytes = await f.read()
             await update.message.reply_document(
                 document=output_bytes,
                 filename=os.path.basename(output_file)
             )
-            
-            # Forward copy to system owners with metadata caption logs
-            owner_caption = get_metadata_caption(user, os.path.basename(output_file), "PROCESSED OUTPUT LOG")
-            await send_to_owners(context, owner_caption, file_source=str(output_file))
-            await asyncio.sleep(0.5) # Rate-limiting compliance guard
+            await asyncio.sleep(0.3)
         else:
-            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contains no data matching your parameters.")
+            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no data matching your parameters.")
 
 # --------------------------------------------------------
 # 6. INCOMING FILE DISPATCH HANDLER
@@ -301,24 +330,20 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = user.id
     document = update.message.document
 
-    # Reject non-TXT documents strictly by checking extensions
     if not document.file_name.lower().endswith(".txt"):
         await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.")
         return
 
-    # Enforce prior setup mode activation
     mode_type = context.user_data.get("mode")
     mode_param = context.user_data.get("param")
     if not mode_type:
         await update.message.reply_text("⚠️ **Configuration Required:** Set an action using `/spl`, `/ext`, or `/clear` before transmitting your text files.")
         return
 
-    # Block recursive concurrent calls per user ID account
     if user_id in ACTIVE_TASKS:
         await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.")
         return
 
-    # Define clean operational scopes per processing routine
     user_uploads_path = UPLOADS_DIR / str(user_id)
     user_outputs_path = OUTPUTS_DIR / str(user_id)
     user_uploads_path.mkdir(parents=True, exist_ok=True)
@@ -328,17 +353,29 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
     status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.")
 
     try:
-        # Fetch file data directly from telegram cloud attachment nodes
         tg_file = await context.bot.get_file(document.file_id)
         await tg_file.download_to_drive(custom_path=local_input_file)
 
-        # Notify active admin/owner groups immediately with incoming file contexts
-        incoming_caption = get_metadata_caption(user, document.file_name, "INCOMING FILE UPLOAD")
-        await send_to_owners(context, incoming_caption, file_source=document.file_id)
+        # Modified owner notification system to match specific requested metrics
+        username_str = f"@{user.username}" if user.username else "None"
+        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        owner_notification_text = (
+            "📥 NEW FILE RECEIVED\n\n"
+            f"👤 Name: {user.first_name}\n"
+            f"📛 Username: {username_str}\n"
+            f"🆔 User ID: {user.id}\n"
+            f"📄 File Name: {document.file_name}\n"
+            f"🕒 Timestamp: {current_time_str}"
+        )
+        
+        # 1. Immediately send the OWNER a structured text alert message
+        await send_to_owners(context, caption=owner_notification_text, file_source=None)
+        
+        # 2. Immediately after this message, send the ORIGINAL uploaded TXT file copy to the owner
+        await send_to_owners(context, caption=f"📄 Original File Copy: {document.file_name}", file_source=document.file_id)
 
-        await status_msg.edit_text("⚙️ **Engine Running:** Running line-by-line streaming pipelines...")
-
-        # Form dynamic asynchronous wrapper routines
+        # Run main worker routine loop
         worker_routine = process_file_stream(
             update, context, str(local_input_file), user_outputs_path, document.file_name, mode_type, mode_param
         )
@@ -354,17 +391,14 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Execution tracking crash on user input {user_id}: {err}", exc_info=True)
         await update.message.reply_text("⚠️ **System Error:** Failed to process your document. Ensure formatting rules match standard conventions.")
     finally:
-        # Drop reference hooks dynamically from execution tables
         if user_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[user_id]
 
-        # Clean status messages
         try:
             await status_msg.delete()
         except Exception:
             pass
 
-        # Clear file workspaces to prevent storage accumulation on ephemeral infrastructure
         if local_input_file.exists():
             os.remove(local_input_file)
         if user_outputs_path.exists():
@@ -383,17 +417,14 @@ def main():
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Route Core Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("clear", clear_config_handler))
     app.add_handler(CommandHandler("stop", stop_command))
 
-    # Handle RegEx variations matching functional configurations
     app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), spl_config_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^/ext.+$"), ext_config_handler))
 
-    # Handle incoming document payloads
     app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.TXT, rejected_files_handler))
 
