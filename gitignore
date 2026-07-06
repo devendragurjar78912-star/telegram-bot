@@ -1,6 +1,7 @@
 __pycache__/
-*.pyc
 .env
 uploads/
 outputs/
 logs/
+*.pyc
+.DS_Store
