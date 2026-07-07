@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, Document
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -74,23 +74,7 @@ if not OWNER_IDS:
 ACTIVE_TASKS = {}
 
 # --------------------------------------------------------
-# 3. KEYBOARD DEFINITIONS
-# --------------------------------------------------------
-START_KEYBOARD = ReplyKeyboardMarkup(
-    [[KeyboardButton("🚀 Start")]],
-    resize_keyboard=True
-)
-
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton("📂 Spl Command"), KeyboardButton("🧹 Clear Command")],
-        [KeyboardButton("⚡ Ext BIN Command"), KeyboardButton("💡 Info")]
-    ],
-    resize_keyboard=True
-)
-
-# --------------------------------------------------------
-# 4. HELPER UTILITIES
+# 3. HELPER UTILITIES
 # --------------------------------------------------------
 async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_source=None):
     """Safely relays messages and files to all verified owner IDs."""
@@ -130,191 +114,160 @@ async def pre_scan_file_metrics(input_path: str, mode: str, param=None):
                 await asyncio.sleep(0)
     return total_lines, matching_lines
 
+async def validate_reply_to_txt(update: Update) -> Document | None:
+    """Validates that the user is explicitly replying to a .txt file."""
+    reply = update.message.reply_to_message
+    if not reply or not reply.document or not reply.document.file_name.lower().endswith('.txt'):
+        await update.message.reply_text("❌ Please reply to a TXT file with the command.")
+        return None
+    return reply.document
+
 # --------------------------------------------------------
-# 5. BOT INTERFACE COMMAND & BUTTON HANDLERS
+# 4. BOT INTERFACE COMMAND & FILE HANDLERS
 # --------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Responds to /start by initializing user options and showing the Start button keyboard."""
-    context.user_data.clear()
+    """Responds to /start by sending a simple greeting."""
     user = update.effective_user
-    
-    if user.username:
-        greeting = f"Hello @{user.username}!"
-    else:
-        greeting = f"Hello {user.first_name}!"
+    greeting = f"Hello @{user.username}!" if user.username else f"Hello {user.first_name}!"
+    welcome_text = f"{greeting}\n\nPlease upload a file in .txt format 📂"
+    await update.message.reply_text(welcome_text)
 
-    welcome_text = (
-        f"{greeting}\n\n"
-        "Please upload a file in .txt format 📂"
-    )
-    await update.message.reply_text(welcome_text, reply_markup=START_KEYBOARD)
-
-async def keyboard_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Switches layout instantly to the permanent professional processing dashboard grid."""
-    transition_text = (
-        "⚙️ **Dashboard Matrix Initialized!**\n\n"
-        "Select an action button from the control panel grid layout below to view details and instruction templates."
-    )
-    await update.message.reply_text(transition_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_spl_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    spl_text = (
-        "Send command like:\n\n"
-        "`/spl100`\n\n"
-        "Example:\n"
-        "`/spl500`\n"
-        "`/spl1000`\n\n"
-        "Then upload your TXT file."
-    )
-    await update.message.reply_text(spl_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_clear_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    clear_text = (
-        "Send:\n\n"
-        "`/clear`\n\n"
-        "Then upload your TXT file.\n\n"
-        "The bot will strict-validate and keep ONLY valid records matching:\n\n"
-        "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Requirements:\n"
-        "- 16-digit card number\n"
-        "- Valid month (01-12)\n"
-        "- Valid Year length (2 or 4 digits)\n"
-        "- 3-digit CVV\n"
-        "- All invalid lines will be dropped."
-    )
-    await update.message.reply_text(clear_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_ext_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ext_text = (
-        "Send command like:\n\n"
-        "`/ext6390` or `/ext 6390`\n\n"
-        "Then upload your TXT file.\n\n"
-        "The bot will extract only matching prefixes."
-    )
-    await update.message.reply_text(ext_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def button_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    info_text = (
-        "📖 **Available Commands**\n\n"
-        "📂 `/spl<number>`\n\n"
-        "Split TXT into parts.\n\n"
-        "Example:\n"
-        "`/spl100`\n"
-        "creates files with 100 lines each.\n\n"
-        "--------------------------\n\n"
-        "🧹 `/clear`\n\n"
-        "Keeps only strictly valid formats:\n"
-        "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Removes every extra field and invalid lines.\n\n"
-        "--------------------------\n\n"
-        "⚡ `/ext <prefix>`\n\n"
-        "Extracts matching BINs (e.g. `/ext4891` or `/ext 489120`).\n\n"
-        "--------------------------\n\n"
-        "⛔ `/stop`\n\n"
-        "Stops current processing immediately."
-    )
-    await update.message.reply_text(info_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await button_info_handler(update, context)
-
-# --------------------------------------------------------
-# 6. PROCESSING TASK MANAGER
-# --------------------------------------------------------
-async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str, param=None):
-    """Encapsulates execution handles bridging standard processing triggers with the active file."""
+async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles standard file uploads and returns the command instructions."""
     user = update.effective_user
-    user_id = user.id
+    document = update.message.document
 
-    if user_id in ACTIVE_TASKS:
-        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.", reply_markup=MAIN_KEYBOARD)
+    if not document.file_name.lower().endswith(".txt"):
+        await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.")
         return
 
-    input_path = UPLOADS_DIR / str(user_id) / "input.txt"
-    if not input_path.exists():
-        await update.message.reply_text("⚠️ Please upload a .txt file first 📂", reply_markup=MAIN_KEYBOARD)
-        return
-
-    original_name = context.user_data.get("original_name", "file.txt")
-    user_outputs_path = OUTPUTS_DIR / str(user_id)
-    user_outputs_path.mkdir(parents=True, exist_ok=True)
-
-    async def task_wrapper():
-        try:
-            await process_file_stream(update, context, str(input_path), user_outputs_path, original_name, mode, param)
-        except asyncio.CancelledError:
-            logger.info(f"User {user_id} cancelled ongoing execution pipeline processing.")
-            await update.message.reply_text("❌ **Operation Halted:** Processing loop explicitly broken by user command.", reply_markup=MAIN_KEYBOARD)
-        except Exception as err:
-            logger.error(f"Execution tracking crash on user input {user_id}: {err}", exc_info=True)
-            await update.message.reply_text("⚠️ **System Error:** Failed to process your document. Ensure formatting rules match standard conventions.", reply_markup=MAIN_KEYBOARD)
-        finally:
-            if user_id in ACTIVE_TASKS:
-                del ACTIVE_TASKS[user_id]
-            if user_outputs_path.exists():
-                shutil.rmtree(user_outputs_path, ignore_errors=True)
-            if input_path.exists():
-                os.remove(input_path)
-            context.user_data.pop("mode", None)
-            context.user_data.pop("param", None)
-
-    task = asyncio.create_task(task_wrapper())
-    ACTIVE_TASKS[user_id] = task
-
-async def spl_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    try:
-        lines_count = int(text[4:])
-        if lines_count <= 0:
-            raise ValueError()
-        
-        user_id = update.effective_user.id
-        if (UPLOADS_DIR / str(user_id) / "input.txt").exists():
-            await run_processing_task(update, context, "split", lines_count)
-        else:
-            context.user_data["mode"] = "split"
-            context.user_data["param"] = lines_count
-            await update.message.reply_text(f"✅ **Configuration Active:** File Split Mode (`{lines_count}` lines per file). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
-    except Exception:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please define a positive integer. Example: `/spl100`", reply_markup=MAIN_KEYBOARD)
-
-async def ext_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    # Handle owner alert matrices without output log spam
+    username_str = f"@{user.username}" if user.username else "None"
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    # Matches /ext4891 or /ext 4891 and ignores trailing spaces
+    owner_notification_text = (
+        "📥 NEW FILE RECEIVED\n\n"
+        f"👤 Name: {user.first_name}\n"
+        f"📛 Username: {username_str}\n"
+        f"🆔 User ID: {user.id}\n"
+        f"📄 File Name: {document.file_name}\n"
+        f"🕒 Timestamp: {current_time_str}"
+    )
+    
+    # Fire-and-forget notifications to owners
+    asyncio.create_task(send_to_owners(context, caption=owner_notification_text, file_source=None))
+    asyncio.create_task(send_to_owners(context, caption=f"📄 Original File Copy: {document.file_name}", file_source=document.file_id))
+
+    success_msg = (
+        "✅ TXT file received successfully 🔥\n\n"
+        "Use commands 👇\n\n"
+        "/spl <N> – Split TXT file\n"
+        "/ext <prefix> – Extract prefix lines\n"
+        "/clear – Clean TXT file\n"
+        "/stop – Stop running process"
+    )
+    await update.message.reply_text(success_msg)
+
+async def rejected_files_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ **File Rejected:** Unsupported payload formatting. Provide valid `.txt` extensions only.")
+
+# --------------------------------------------------------
+# 5. COMMAND PIPELINE TRIGGERS
+# --------------------------------------------------------
+async def clear_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = await validate_reply_to_txt(update)
+    if not document: return
+    await run_processing_task(update, context, document, "clear", None)
+
+async def ext_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = await validate_reply_to_txt(update)
+    if not document: return
+    
+    text = update.message.text.strip()
     match = re.match(r"^/ext\s*(\d+)\s*$", text, re.IGNORECASE)
     
     if not match:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please supply a numeric prefix. Example: `/ext6390` or `/ext 6390`", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("❌ **Invalid Parameter:** Please supply a numeric prefix. Example: `/ext4891` or `/ext 489120`")
         return
         
     prefix_val = match.group(1)
-    user_id = update.effective_user.id
-    
-    if (UPLOADS_DIR / str(user_id) / "input.txt").exists():
-        await run_processing_task(update, context, "extract", prefix_val)
-    else:
-        context.user_data["mode"] = "extract"
-        context.user_data["param"] = prefix_val
-        await update.message.reply_text(f"✅ **Configuration Active:** Extraction Mode (Prefix: `{prefix_val}`). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+    await run_processing_task(update, context, document, "extract", prefix_val)
 
-async def clear_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if (UPLOADS_DIR / str(user_id) / "input.txt").exists():
-        await run_processing_task(update, context, "clear", None)
-    else:
-        context.user_data["mode"] = "clear"
-        context.user_data["param"] = None
-        await update.message.reply_text("✅ **Configuration Active:** Clean & Validate Mode. Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+async def spl_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = await validate_reply_to_txt(update)
+    if not document: return
+    
+    text = update.message.text.strip()
+    match = re.match(r"^/spl\s*(\d+)\s*$", text, re.IGNORECASE)
+    
+    if not match:
+        await update.message.reply_text("❌ **Invalid Parameter:** Please define a positive integer. Example: `/spl100`")
+        return
+        
+    lines_count = int(match.group(1))
+    if lines_count <= 0:
+        await update.message.reply_text("❌ **Invalid Parameter:** The number of lines must be greater than 0.")
+        return
+        
+    await run_processing_task(update, context, document, "split", lines_count)
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in ACTIVE_TASKS:
         task = ACTIVE_TASKS[user_id]
         task.cancel()
-        await update.message.reply_text("🛑 **Cancellation signal transmitted.** Terminating operations now...", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("🛑 **Cancellation signal transmitted.** Terminating operations now...")
     else:
-        await update.message.reply_text("ℹ️ You have no active file streams running right now.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("ℹ️ You have no active file streams running right now.")
+
+# --------------------------------------------------------
+# 6. PROCESSING TASK MANAGER
+# --------------------------------------------------------
+async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE, document: Document, mode: str, param=None):
+    """Encapsulates execution handles bridging standard processing triggers with the specified file."""
+    user = update.effective_user
+    user_id = user.id
+
+    if user_id in ACTIVE_TASKS:
+        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.")
+        return
+
+    # Use message_id of the replied file message to isolate simultaneous uploads safely
+    message_id = update.message.reply_to_message.message_id
+    task_dir_name = f"{user_id}_{message_id}"
+    
+    input_dir = UPLOADS_DIR / task_dir_name
+    input_dir.mkdir(parents=True, exist_ok=True)
+    input_path = input_dir / "input.txt"
+    
+    user_outputs_path = OUTPUTS_DIR / task_dir_name
+    user_outputs_path.mkdir(parents=True, exist_ok=True)
+
+    original_name = document.file_name
+
+    async def task_wrapper():
+        try:
+            status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.")
+            tg_file = await context.bot.get_file(document.file_id)
+            await tg_file.download_to_drive(custom_path=input_path)
+            await status_msg.delete()
+            
+            await process_file_stream(update, context, str(input_path), user_outputs_path, original_name, mode, param)
+        except asyncio.CancelledError:
+            logger.info(f"User {user_id} cancelled ongoing execution pipeline processing.")
+            await update.message.reply_text("❌ **Operation Halted:** Processing loop explicitly broken by user command.")
+        except Exception as err:
+            logger.error(f"Execution tracking crash on user input {user_id}: {err}", exc_info=True)
+            await update.message.reply_text("⚠️ **System Error:** Failed to process your document. Ensure formatting rules match standard conventions.")
+        finally:
+            if user_id in ACTIVE_TASKS:
+                del ACTIVE_TASKS[user_id]
+            # Clean up task-specific isolated directories
+            shutil.rmtree(input_dir, ignore_errors=True)
+            shutil.rmtree(user_outputs_path, ignore_errors=True)
+
+    task = asyncio.create_task(task_wrapper())
+    ACTIVE_TASKS[user_id] = task
 
 # --------------------------------------------------------
 # 7. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
@@ -327,7 +280,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_lines, matching_lines = await pre_scan_file_metrics(input_path, mode, param)
 
     if total_lines == 0:
-        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
         return
 
     # Step 1: Send mode-specific progress summary message blocks
@@ -340,14 +293,14 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📦 Lines Per Part: {chunk_size}\n"
             f"📂 Total Parts: {total_parts}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     elif mode == "clear":
         progress_msg = (
             "🚀 Cleaning & Validating Started...\n\n"
             f"📄 Total Input Lines: {total_lines}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     elif mode == "extract":
         progress_msg = (
@@ -356,7 +309,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📄 Total Lines: {total_lines}\n"
             f"📄 Matching Lines: {matching_lines}"
         )
-        await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(progress_msg)
 
     # Step 2: Run execution blocks asynchronously
     # ----------------- MODE: CLEAR PIPELINE -----------------
@@ -415,7 +368,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📄 Valid Output Lines: {output_lines_count}\n"
             f"🗑️ Invalid Lines Dropped: {total_lines - output_lines_count}"
         )
-        await update.message.reply_text(completion_msg, reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(completion_msg)
 
     # ----------------- MODE: EXTRACT PIPELINE -----------------
     elif mode == "extract":
@@ -438,11 +391,9 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if line_counter % 2000 == 0:
                     await asyncio.sleep(0)
                     
-        # Only add to the files tracker if we actually found matches
         if output_lines_count > 0:
             sent_files_tracker.append(out_path)
         else:
-            # Clean up empty file
             if out_path.exists():
                 os.remove(out_path)
 
@@ -486,119 +437,38 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 output_bytes = await f.read()
             await update.message.reply_document(
                 document=output_bytes,
-                filename=os.path.basename(output_file),
-                reply_markup=MAIN_KEYBOARD
+                filename=os.path.basename(output_file)
             )
             files_sent = True
             await asyncio.sleep(0.3)
 
     # Successful completion flag output
     if files_sent:
-        await update.message.reply_text("✅ Work done 💯", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("✅ Work done 💯")
     else:
-        # If no files were sent, trigger the appropriate error message
         if mode == "extract":
-            await update.message.reply_text(f"❌ No cards found with prefix: {param}", reply_markup=MAIN_KEYBOARD)
+            await update.message.reply_text(f"❌ No cards found with prefix: {param}")
         else:
-            await update.message.reply_text("⚠️ Resulting output contained no valid data matching your parameters.", reply_markup=MAIN_KEYBOARD)
-
-
-# --------------------------------------------------------
-# 8. INCOMING FILE DISPATCH HANDLER
-# --------------------------------------------------------
-async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Validates document payloads and aligns configurations matching the requested workflows."""
-    user = update.effective_user
-    user_id = user.id
-    document = update.message.document
-
-    if not document.file_name.lower().endswith(".txt"):
-        await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.", reply_markup=MAIN_KEYBOARD)
-        return
-
-    if user_id in ACTIVE_TASKS:
-        await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.", reply_markup=MAIN_KEYBOARD)
-        return
-
-    user_uploads_path = UPLOADS_DIR / str(user_id)
-    user_uploads_path.mkdir(parents=True, exist_ok=True)
-    local_input_file = user_uploads_path / "input.txt"
-
-    status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.", reply_markup=MAIN_KEYBOARD)
-
-    try:
-        tg_file = await context.bot.get_file(document.file_id)
-        await tg_file.download_to_drive(custom_path=local_input_file)
-        context.user_data['original_name'] = document.file_name
-
-        # Handle owner alert matrices without output log spam
-        username_str = f"@{user.username}" if user.username else "None"
-        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-        
-        owner_notification_text = (
-            "📥 NEW FILE RECEIVED\n\n"
-            f"👤 Name: {user.first_name}\n"
-            f"📛 Username: {username_str}\n"
-            f"🆔 User ID: {user.id}\n"
-            f"📄 File Name: {document.file_name}\n"
-            f"🕒 Timestamp: {current_time_str}"
-        )
-        
-        await send_to_owners(context, caption=owner_notification_text, file_source=None)
-        await send_to_owners(context, caption=f"📄 Original File Copy: {document.file_name}", file_source=document.file_id)
-
-        await status_msg.delete()
-
-        # Check hybrid pipeline states: Did they config beforehand or upload fresh?
-        mode_type = context.user_data.get("mode")
-        mode_param = context.user_data.get("param")
-
-        if mode_type:
-            # Process instantly if config was pre-selected
-            await run_processing_task(update, context, mode_type, mode_param)
-        else:
-            # New File Drop-off UI Workflow trigger
-            success_msg = (
-                "✅ TXT file received successfully 🔥\n\n"
-                "Use commands 👇\n\n"
-                "/spl <N> – Split TXT file\n"
-                "/ext <prefix> – Extract prefix lines\n"
-                "/clear – Clean TXT file\n"
-                "/stop – Stop running process"
-            )
-            await update.message.reply_text(success_msg, reply_markup=MAIN_KEYBOARD)
-
-    except Exception as err:
-        logger.error(f"Download or routing crash on user input {user_id}: {err}", exc_info=True)
-        await update.message.reply_text("⚠️ **System Error:** Failed to process or download your document.", reply_markup=MAIN_KEYBOARD)
-
-async def rejected_files_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ **File Rejected:** Unsupported payload formatting. Provide valid `.txt` extensions only.", reply_markup=MAIN_KEYBOARD)
+            await update.message.reply_text("⚠️ Resulting output contained no valid data matching your parameters.")
 
 # --------------------------------------------------------
-# 9. BOT APPLICATION BOOTSTRAP INITIALIZER
+# 8. BOT APPLICATION BOOTSTRAP INITIALIZER
 # --------------------------------------------------------
 def main():
     logger.info("Initializing Application Framework Components...")
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Core commands
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("clear", clear_config_handler))
     app.add_handler(CommandHandler("stop", stop_command))
 
-    app.add_handler(MessageHandler(filters.Text("🚀 Start"), keyboard_start_handler))
-    app.add_handler(MessageHandler(filters.Text("📂 Spl Command"), button_spl_handler))
-    app.add_handler(MessageHandler(filters.Text("🧹 Clear Command"), button_clear_handler))
-    app.add_handler(MessageHandler(filters.Text("⚡ Ext BIN Command"), button_ext_handler))
-    app.add_handler(MessageHandler(filters.Text("💡 Info"), button_info_handler))
+    # Reply commands mapped with Regex Filters to capture optional spaces and strict structures
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/clear$"), clear_command_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/spl\s*\d+\s*$"), spl_command_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/ext\s*\d+\s*$"), ext_command_handler))
 
-    app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), spl_config_handler))
-    
-    # Updated Regex to allow /ext4891 and /ext 4891
-    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/ext\s*\d+\s*$"), ext_config_handler))
-
+    # Catch-all for uploaded documents
     app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.TXT, rejected_files_handler))
 
