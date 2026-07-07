@@ -175,7 +175,7 @@ async def button_clear_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         "The bot will keep only:\n\n"
         "`CARD|MM|YY(or YYYY)|CVV`\n\n"
         "Examples:\n\n"
-        "1234567890123456|12|28|123|John|Delhi\n"
+        "1234567890123456|12/28|123|John|Delhi\n"
         "↓\n"
         "`1234567890123456|12|28|123`\n\n"
         "and\n\n"
@@ -371,13 +371,25 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if not stripped_line:
                     continue
                     
-                segments = stripped_line.split("|")
-                # Retain strictly the first 4 elements to fulfill precise field cuts
-                if len(segments) >= 4:
-                    cleaned_output = "|".join(segments[:4]) + "\n"
-                    await outfile.write(cleaned_output)
-                else:
-                    await outfile.write(stripped_line + "\n")
+                # Clean up any surrounding spaces on the splits
+                segments = [seg.strip() for seg in stripped_line.split("|")]
+                cleaned_output = stripped_line # Default fallback
+                
+                # Check Format 1 & 2: CARD|MM/YY|CVV|NAME...
+                if len(segments) >= 3 and "/" in segments[1]:
+                    date_parts = segments[1].split("/")
+                    if len(date_parts) == 2:
+                        card = segments[0]
+                        mm = date_parts[0].strip()
+                        yy = date_parts[1].strip()
+                        cvv = segments[2]
+                        cleaned_output = f"{card}|{mm}|{yy}|{cvv}"
+                        
+                # Check Format 3 & 4: CARD|MM|YY|CVV|NAME...
+                elif len(segments) >= 4:
+                    cleaned_output = "|".join(segments[:4])
+                    
+                await outfile.write(cleaned_output + "\n")
                 output_lines_count += 1
                 
                 if line_counter % 2000 == 0:
