@@ -15,7 +15,6 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-import aiofiles
 
 # --------------------------------------------------------
 # 1. DIRECTORY SETUP & LOGGING CONFIGURATION
@@ -74,7 +73,94 @@ if not OWNER_IDS:
 ACTIVE_TASKS = {}
 
 # --------------------------------------------------------
-# 3. HELPER UTILITIES
+# 3. HIGH-PERFORMANCE SYNCHRONOUS STREAM WORKERS
+# --------------------------------------------------------
+def sync_clear_worker(input_path: str, out_path: str):
+    """Processes clean formats line-by-line via optimized C-level file streams."""
+    input_lines = 0
+    output_lines = 0
+    with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
+         open(out_path, mode="w", encoding="utf-8", buffering=64*1024) as outfile:
+        for line in infile:
+            input_lines += 1
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+                
+            segments = [seg.strip() for seg in stripped_line.split("|")]
+            card, mm, yy, cvv = None, None, None, None
+            
+            if len(segments) >= 3 and "/" in segments[1]:
+                date_parts = segments[1].split("/")
+                if len(date_parts) == 2:
+                    card = segments[0]
+                    mm = date_parts[0].strip()
+                    yy = date_parts[1].strip()
+                    cvv = segments[2]
+                    
+            elif len(segments) >= 4:
+                card = segments[0]
+                mm = segments[1]
+                yy = segments[2]
+                cvv = segments[3]
+                
+            if card and mm and yy and cvv:
+                if card.isdigit() and len(card) == 16:
+                    if mm.isdigit() and len(mm) == 2 and 1 <= int(mm) <= 12:
+                        if yy.isdigit() and len(yy) in [2, 4]:
+                            if cvv.isdigit() and len(cvv) == 3:
+                                outfile.write(f"{card}|{mm}|{yy}|{cvv}\n")
+                                output_lines += 1
+    return input_lines, output_lines
+
+def sync_fbin_worker(input_path: str, out_path: str, prefix_str: str):
+    """Scans and extracts target prefixes reliably until EOF without internal leakage."""
+    input_lines = 0
+    output_lines = 0
+    with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
+         open(out_path, mode="w", encoding="utf-8", buffering=64*1024) as outfile:
+        for line in infile:
+            input_lines += 1
+            stripped_line = line.strip()
+            if stripped_line.startswith(prefix_str):
+                outfile.write(stripped_line + "\n")
+                output_lines += 1
+    return input_lines, output_lines
+
+def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int):
+    """Splits target file line-by-line opening target descriptors on-the-fly."""
+    input_lines = 0
+    part_index = 1
+    current_lines_written = 0
+    current_out_file = None
+    paths_created = []
+    
+    try:
+        with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile:
+            for line in infile:
+                input_lines += 1
+                if current_out_file is None:
+                    part_filename = f"part {part_index}.txt"
+                    part_path = user_outputs_dir / part_filename
+                    current_out_file = open(part_path, mode="w", encoding="utf-8", buffering=64*1024)
+                    paths_created.append(part_path)
+                
+                current_out_file.write(line)
+                current_lines_written += 1
+                
+                if current_lines_written >= chunk_size:
+                    current_out_file.close()
+                    current_out_file = None
+                    current_lines_written = 0
+                    part_index += 1
+    finally:
+        if current_out_file is not None:
+            current_out_file.close()
+            
+    return input_lines, paths_created
+
+# --------------------------------------------------------
+# 4. HELPER UTILITIES
 # --------------------------------------------------------
 async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_source=None):
     """Safely relays messages and files to all verified owner IDs."""
@@ -82,8 +168,8 @@ async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_
         try:
             if file_source:
                 if isinstance(file_source, str) and os.path.exists(file_source):
-                    async with aiofiles.open(file_source, "rb") as f:
-                        file_bytes = await f.read()
+                    with open(file_source, "rb") as f:
+                        file_bytes = f.read()
                     await context.bot.send_document(
                         chat_id=owner_id,
                         document=file_bytes,
@@ -101,19 +187,6 @@ async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_
         except Exception as e:
             logger.error(f"Failed to forward updates to owner ID {owner_id}: {e}")
 
-async def pre_scan_file_metrics(input_path: str, mode: str, param=None):
-    """Line-by-line low memory pre-scanner to calculate lines and matching prefixes."""
-    total_lines = 0
-    matching_lines = 0
-    async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as f:
-        async for line in f:
-            total_lines += 1
-            if mode == "extract" and line.strip().startswith(str(param)):
-                matching_lines += 1
-            if total_lines % 5000 == 0:
-                await asyncio.sleep(0)
-    return total_lines, matching_lines
-
 async def validate_reply_to_txt(update: Update) -> Document | None:
     """Validates that the user is explicitly replying to a .txt file."""
     reply = update.message.reply_to_message
@@ -123,7 +196,7 @@ async def validate_reply_to_txt(update: Update) -> Document | None:
     return reply.document
 
 # --------------------------------------------------------
-# 4. BOT INTERFACE COMMAND & FILE HANDLERS
+# 5. BOT INTERFACE COMMAND & FILE HANDLERS
 # --------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Responds to /start by sending a plain text greeting with no keyboards."""
@@ -141,7 +214,6 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.")
         return
 
-    # Handle owner notifications
     username_str = f"@{user.username}" if user.username else "None"
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     
@@ -171,7 +243,7 @@ async def rejected_files_handler(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("❌ **File Rejected:** Unsupported payload formatting. Provide valid `.txt` extensions only.")
 
 # --------------------------------------------------------
-# 5. COMMAND PIPELINE TRIGGERS
+# 6. COMMAND PIPELINE TRIGGERS
 # --------------------------------------------------------
 async def clear_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = await validate_reply_to_txt(update)
@@ -220,7 +292,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ You have no active file streams running right now.")
 
 # --------------------------------------------------------
-# 6. PROCESSING TASK MANAGER
+# 7. PROCESSING TASK MANAGER
 # --------------------------------------------------------
 async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE, document: Document, mode: str, param=None):
     """Encapsulates execution handles bridging standard processing triggers with the specified file."""
@@ -265,91 +337,32 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
     ACTIVE_TASKS[user_id] = task
 
 # --------------------------------------------------------
-# 7. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
+# 8. STREAM PIPELINE RUNTIME ENGINE
 # --------------------------------------------------------
 async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, mode: str, param):
-    """Core text processing logic. Executes line-by-line using low-memory asynchronous handles."""
+    """Orchestrates threaded single-pass text processing streams with real-time updates."""
     sent_files_tracker = []
-    line_counter = 0
 
-    total_lines, matching_lines = await pre_scan_file_metrics(input_path, mode, param)
-
-    if total_lines == 0:
-        await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
-        return
-
+    # Send mode-specific initialization triggers instantly (No multi-pass latency)
     if mode == "split":
-        chunk_size = int(param)
-        total_parts = math.ceil(total_lines / chunk_size)
-        progress_msg = (
-            "🚀 Processing Started...\n\n"
-            f"📄 Total Lines: {total_lines}\n"
-            f"📦 Lines Per Part: {chunk_size}\n"
-            f"📂 Total Parts: {total_parts}"
-        )
-        await update.message.reply_text(progress_msg)
-
+        await update.message.reply_text(f"🚀 Processing Started... Splitting into blocks of {param} lines.")
     elif mode == "clear":
-        progress_msg = (
-            "🚀 Cleaning & Validating Started...\n\n"
-            f"📄 Total Input Lines: {total_lines}"
-        )
-        await update.message.reply_text(progress_msg)
-
+        await update.message.reply_text("🚀 Cleaning & Validating Started...")
     elif mode == "extract":
-        progress_msg = (
-            "🚀 Extracting...\n\n"
-            f"🔎 Prefix: {param}\n"
-            f"📄 Total Lines: {total_lines}\n"
-            f"📄 Matching Lines: {matching_lines}"
-        )
-        await update.message.reply_text(progress_msg)
+        await update.message.reply_text(f"🚀 Extracting BIN {param}...")
 
     # ----------------- MODE: CLEAR PIPELINE -----------------
     if mode == "clear":
         out_filename = "[@levisplitter_bot] cleaned.txt"
         out_path = user_outputs_dir / out_filename
-        output_lines_count = 0
         
-        async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
-                   aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
-            async for line in infile:
-                line_counter += 1
-                stripped_line = line.strip()
-                if not stripped_line:
-                    continue
-                    
-                segments = [seg.strip() for seg in stripped_line.split("|")]
-                card, mm, yy, cvv = None, None, None, None
-                
-                if len(segments) >= 3 and "/" in segments[1]:
-                    date_parts = segments[1].split("/")
-                    if len(date_parts) == 2:
-                        card = segments[0]
-                        mm = date_parts[0].strip()
-                        yy = date_parts[1].strip()
-                        cvv = segments[2]
-                        
-                elif len(segments) >= 4:
-                    card = segments[0]
-                    mm = segments[1]
-                    yy = segments[2]
-                    cvv = segments[3]
-                    
-                if card and mm and yy and cvv:
-                    is_valid_card = card.isdigit() and len(card) == 16
-                    is_valid_mm = mm.isdigit() and len(mm) == 2 and 1 <= int(mm) <= 12
-                    is_valid_yy = yy.isdigit() and len(yy) in [2, 4]
-                    is_valid_cvv = cvv.isdigit() and len(cvv) == 3
-                    
-                    if is_valid_card and is_valid_mm and is_valid_yy and is_valid_cvv:
-                        cleaned_output = f"{card}|{mm}|{yy}|{cvv}"
-                        await outfile.write(cleaned_output + "\n")
-                        output_lines_count += 1
-                
-                if line_counter % 2000 == 0:
-                    await asyncio.sleep(0)
-
+        # Offload streaming block directly to a background thread worker
+        total_lines, output_lines_count = await asyncio.to_thread(sync_clear_worker, input_path, str(out_path))
+        
+        if total_lines == 0:
+            await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
+            return
+            
         sent_files_tracker.append(out_path)
         
         completion_msg = (
@@ -360,87 +373,56 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await update.message.reply_text(completion_msg)
 
-    # ----------------- MODE: EXTRACT PIPELINE -----------------
+    # ----------------- MODE: FBIN PIPELINE -----------------
     elif mode == "extract":
         prefix_str = str(param)
         out_filename = f"[@levisplitter_bot] {prefix_str}.txt"
         out_path = user_outputs_dir / out_filename
-        output_lines_count = 0
         
-        async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
-                   aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
-            async for line in infile:
-                line_counter += 1
-                stripped_line = line.strip()
-                
-                if stripped_line.startswith(prefix_str):
-                    await outfile.write(stripped_line + "\n")
-                    output_lines_count += 1
-                
-                if line_counter % 2000 == 0:
-                    await asyncio.sleep(0)
-                    
+        total_lines, output_lines_count = await asyncio.to_thread(sync_fbin_worker, input_path, str(out_path), prefix_str)
+        
+        if total_lines == 0:
+            await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
+            return
+
         if output_lines_count > 0:
             sent_files_tracker.append(out_path)
         else:
             if out_path.exists():
                 os.remove(out_path)
+            await update.message.reply_text("❌ No matching BIN found.")
+            return
 
     # ------------------ MODE: SPLIT PIPELINE ------------------
     elif mode == "split":
-        limit = int(param)
-        part_index = 1
-        current_lines_written = 0
-        current_out_file = None
+        chunk_size = int(param)
         
-        try:
-            async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile:
-                async for line in infile:
-                    line_counter += 1
-                    if current_out_file is None:
-                        part_filename = f"part {part_index}.txt"
-                        part_path = user_outputs_dir / part_filename
-                        current_out_file = await aiofiles.open(part_path, mode="w", encoding="utf-8")
-                        sent_files_tracker.append(part_path)
-                    
-                    await current_out_file.write(line)
-                    current_lines_written += 1
-                    
-                    if current_lines_written >= limit:
-                        await current_out_file.close()
-                        current_out_file = None
-                        current_lines_written = 0
-                        part_index += 1
-                        
-                    if line_counter % 2000 == 0:
-                        await asyncio.sleep(0)
-        finally:
-            if current_out_file is not None:
-                await current_out_file.close()
+        total_lines, paths_created = await asyncio.to_thread(sync_split_worker, input_path, user_outputs_dir, chunk_size)
+        
+        if total_lines == 0:
+            await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
+            return
+            
+        sent_files_tracker.extend(paths_created)
 
-    # Step 3: Dispatch output items and signal Completion
+    # Dispatch produced document arrays back to user streams
     files_sent = False
     for output_file in sent_files_tracker:
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            async with aiofiles.open(output_file, "rb") as f:
-                output_bytes = await f.read()
+            with open(output_file, "rb") as f:
+                output_bytes = f.read()
             await update.message.reply_document(
                 document=output_bytes,
                 filename=os.path.basename(output_file)
             )
             files_sent = True
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
 
     if files_sent:
         await update.message.reply_text("✅ Work done 💯")
-    else:
-        if mode == "extract":
-            await update.message.reply_text(f"❌ No cards found with prefix: {param}")
-        else:
-            await update.message.reply_text("⚠️ Resulting output contained no valid data matching your parameters.")
 
 # --------------------------------------------------------
-# 8. BOT APPLICATION BOOTSTRAP INITIALIZER
+# 9. BOT APPLICATION BOOTSTRAP INITIALIZER
 # --------------------------------------------------------
 def main():
     logger.info("Initializing Application Framework Components...")
