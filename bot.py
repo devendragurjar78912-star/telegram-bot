@@ -161,7 +161,7 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         "✅ TXT file received successfully 🔥\n\n"
         "Use commands 👇\n\n"
         "/spl <N> – Split TXT file\n"
-        "/ext <prefix> – Extract prefix lines\n"
+        "/fbin <prefix> – Extract prefix lines\n"
         "/clear – Clean TXT file\n"
         "/stop – Stop running process"
     )
@@ -178,15 +178,15 @@ async def clear_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if not document: return
     await run_processing_task(update, context, document, "clear", None)
 
-async def ext_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def fbin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = await validate_reply_to_txt(update)
     if not document: return
     
     text = update.message.text.strip()
-    match = re.match(r"^/ext\s*(\d+)\s*$", text, re.IGNORECASE)
+    match = re.match(r"^/fbin\s*(\d+)\s*$", text, re.IGNORECASE)
     
     if not match:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please supply a numeric prefix. Example: `/ext4891` or `/ext 489120`")
+        await update.message.reply_text("❌ **Invalid Parameter:** Please supply a numeric prefix. Example: `/fbin4891` or `/fbin 489120`")
         return
         
     prefix_val = match.group(1)
@@ -241,8 +241,6 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_outputs_path = OUTPUTS_DIR / task_dir_name
     user_outputs_path.mkdir(parents=True, exist_ok=True)
 
-    original_name = document.file_name
-
     async def task_wrapper():
         try:
             status_msg = await update.message.reply_text("📥 **Downloading document file...** Please hold on.")
@@ -250,7 +248,7 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
             await tg_file.download_to_drive(custom_path=input_path)
             await status_msg.delete()
             
-            await process_file_stream(update, context, str(input_path), user_outputs_path, original_name, mode, param)
+            await process_file_stream(update, context, str(input_path), user_outputs_path, mode, param)
         except asyncio.CancelledError:
             logger.info(f"User {user_id} cancelled ongoing execution pipeline processing.")
             await update.message.reply_text("❌ **Operation Halted:** Processing loop explicitly broken by user command.")
@@ -269,7 +267,7 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
 # --------------------------------------------------------
 # 7. STREAM PIPELINE COMPONENT DESIGN WITH PRE-CALCULATIONS
 # --------------------------------------------------------
-async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, original_name: str, mode: str, param):
+async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, mode: str, param):
     """Core text processing logic. Executes line-by-line using low-memory asynchronous handles."""
     sent_files_tracker = []
     line_counter = 0
@@ -309,7 +307,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ----------------- MODE: CLEAR PIPELINE -----------------
     if mode == "clear":
-        out_filename = f"cleared_{original_name}"
+        out_filename = "[@levisplitter_bot] cleaned.txt"
         out_path = user_outputs_dir / out_filename
         output_lines_count = 0
         
@@ -365,7 +363,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ----------------- MODE: EXTRACT PIPELINE -----------------
     elif mode == "extract":
         prefix_str = str(param)
-        out_filename = f"extracted_{original_name}"
+        out_filename = f"[@levisplitter_bot] {prefix_str}.txt"
         out_path = user_outputs_dir / out_filename
         output_lines_count = 0
         
@@ -400,7 +398,7 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 async for line in infile:
                     line_counter += 1
                     if current_out_file is None:
-                        part_filename = f"part_{part_index}_{original_name}"
+                        part_filename = f"part {part_index}.txt"
                         part_path = user_outputs_dir / part_filename
                         current_out_file = await aiofiles.open(part_path, mode="w", encoding="utf-8")
                         sent_files_tracker.append(part_path)
@@ -456,7 +454,7 @@ def main():
     # Text message regex routers for processing file replies
     app.add_handler(MessageHandler(filters.Regex(r"(?i)^/clear$"), clear_command_handler))
     app.add_handler(MessageHandler(filters.Regex(r"(?i)^/spl\s*\d+\s*$"), spl_command_handler))
-    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/ext\s*\d+\s*$"), ext_command_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/fbin\s*\d+\s*$"), fbin_command_handler))
 
     # Catch-all file validation streams
     app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
