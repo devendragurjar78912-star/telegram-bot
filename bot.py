@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import asyncio
 import shutil
@@ -123,7 +124,7 @@ async def pre_scan_file_metrics(input_path: str, mode: str, param=None):
     async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as f:
         async for line in f:
             total_lines += 1
-            if mode == "extract" and line.startswith(str(param)):
+            if mode == "extract" and line.strip().startswith(str(param)):
                 matching_lines += 1
             if total_lines % 5000 == 0:
                 await asyncio.sleep(0)
@@ -172,25 +173,23 @@ async def button_clear_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         "Send:\n\n"
         "`/clear`\n\n"
         "Then upload your TXT file.\n\n"
-        "The bot will keep only:\n\n"
+        "The bot will strict-validate and keep ONLY valid records matching:\n\n"
         "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Examples:\n\n"
-        "1234567890123456|12/28|123|John|Delhi\n"
-        "↓\n"
-        "`1234567890123456|12|28|123`\n\n"
-        "and\n\n"
-        "1234567890123456|12|2028|123|John|Delhi\n"
-        "↓\n"
-        "`1234567890123456|12|2028|123`"
+        "Requirements:\n"
+        "- 16-digit card number\n"
+        "- Valid month (01-12)\n"
+        "- Valid Year length (2 or 4 digits)\n"
+        "- 3-digit CVV\n"
+        "- All invalid lines will be dropped."
     )
     await update.message.reply_text(clear_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 async def button_ext_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ext_text = (
         "Send command like:\n\n"
-        "`/ext6390`\n\n"
+        "`/ext6390` or `/ext 6390`\n\n"
         "Then upload your TXT file.\n\n"
-        "The bot will extract only matching BINs."
+        "The bot will extract only matching prefixes."
     )
     await update.message.reply_text(ext_text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
@@ -204,14 +203,12 @@ async def button_info_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         "creates files with 100 lines each.\n\n"
         "--------------------------\n\n"
         "🧹 `/clear`\n\n"
-        "Keeps only\n"
+        "Keeps only strictly valid formats:\n"
         "`CARD|MM|YY(or YYYY)|CVV`\n\n"
-        "Removes every extra field.\n\n"
+        "Removes every extra field and invalid lines.\n\n"
         "--------------------------\n\n"
-        "⚡ `/extBIN`\n\n"
-        "Extracts only matching BIN.\n\n"
-        "Example:\n"
-        "`/ext6390`\n\n"
+        "⚡ `/ext <prefix>`\n\n"
+        "Extracts matching BINs (e.g. `/ext4891` or `/ext 489120`).\n\n"
         "--------------------------\n\n"
         "⛔ `/stop`\n\n"
         "Stops current processing immediately."
@@ -283,12 +280,17 @@ async def spl_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def ext_config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    prefix_val = text[4:]
-    if not prefix_val:
-        await update.message.reply_text("❌ **Invalid Parameter:** Please supply an explicit prefix sequence. Example: `/ext6390`", reply_markup=MAIN_KEYBOARD)
+    
+    # Matches /ext4891 or /ext 4891 and ignores trailing spaces
+    match = re.match(r"^/ext\s*(\d+)\s*$", text, re.IGNORECASE)
+    
+    if not match:
+        await update.message.reply_text("❌ **Invalid Parameter:** Please supply a numeric prefix. Example: `/ext6390` or `/ext 6390`", reply_markup=MAIN_KEYBOARD)
         return
         
+    prefix_val = match.group(1)
     user_id = update.effective_user.id
+    
     if (UPLOADS_DIR / str(user_id) / "input.txt").exists():
         await run_processing_task(update, context, "extract", prefix_val)
     else:
@@ -303,7 +305,7 @@ async def clear_config_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         context.user_data["mode"] = "clear"
         context.user_data["param"] = None
-        await update.message.reply_text("✅ **Configuration Active:** Pipe Cleaning Mode (Keeps the first 4 fields only). Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("✅ **Configuration Active:** Clean & Validate Mode. Please upload your `.txt` document.", reply_markup=MAIN_KEYBOARD)
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -392,13 +394,9 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                     
                 # STRICT VALIDATION CHECKS
                 if card and mm and yy and cvv:
-                    # 1. Card must be exactly 16 digits
                     is_valid_card = card.isdigit() and len(card) == 16
-                    # 2. Month must be 01-12 (2 digits)
                     is_valid_mm = mm.isdigit() and len(mm) == 2 and 1 <= int(mm) <= 12
-                    # 3. Year must be 2 or 4 digits
                     is_valid_yy = yy.isdigit() and len(yy) in [2, 4]
-                    # 4. CVV must be exactly 3 digits
                     is_valid_cvv = cvv.isdigit() and len(cvv) == 3
                     
                     if is_valid_card and is_valid_mm and is_valid_yy and is_valid_cvv:
@@ -424,18 +422,29 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         prefix_str = str(param)
         out_filename = f"extracted_{original_name}"
         out_path = user_outputs_dir / out_filename
+        output_lines_count = 0
         
         async with aiofiles.open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
                    aiofiles.open(out_path, mode="w", encoding="utf-8") as outfile:
             async for line in infile:
                 line_counter += 1
-                if line.startswith(prefix_str):
-                    await outfile.write(line)
+                stripped_line = line.strip()
+                
+                # Check if the line begins with the requested prefix
+                if stripped_line.startswith(prefix_str):
+                    await outfile.write(stripped_line + "\n")
+                    output_lines_count += 1
                 
                 if line_counter % 2000 == 0:
                     await asyncio.sleep(0)
                     
-        sent_files_tracker.append(out_path)
+        # Only add to the files tracker if we actually found matches
+        if output_lines_count > 0:
+            sent_files_tracker.append(out_path)
+        else:
+            # Clean up empty file
+            if out_path.exists():
+                os.remove(out_path)
 
     # ------------------ MODE: SPLIT PIPELINE ------------------
     elif mode == "split":
@@ -482,12 +491,18 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             files_sent = True
             await asyncio.sleep(0.3)
-        else:
-            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no valid data matching your parameters.", reply_markup=MAIN_KEYBOARD)
 
     # Successful completion flag output
     if files_sent:
-        await update.message.reply_text("Work done ✅ 💯", reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text("✅ Work done 💯", reply_markup=MAIN_KEYBOARD)
+    else:
+        # If no files were sent, trigger the appropriate error message
+        if mode == "extract":
+            await update.message.reply_text(f"❌ No cards found with prefix: {param}", reply_markup=MAIN_KEYBOARD)
+        else:
+            await update.message.reply_text("⚠️ Resulting output contained no valid data matching your parameters.", reply_markup=MAIN_KEYBOARD)
+
+
 # --------------------------------------------------------
 # 8. INCOMING FILE DISPATCH HANDLER
 # --------------------------------------------------------
@@ -580,7 +595,9 @@ def main():
     app.add_handler(MessageHandler(filters.Text("💡 Info"), button_info_handler))
 
     app.add_handler(MessageHandler(filters.Regex(r"^/spl\d+$"), spl_config_handler))
-    app.add_handler(MessageHandler(filters.Regex(r"^/ext.+$"), ext_config_handler))
+    
+    # Updated Regex to allow /ext4891 and /ext 4891
+    app.add_handler(MessageHandler(filters.Regex(r"(?i)^/ext\s*\d+\s*$"), ext_config_handler))
 
     app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.TXT, rejected_files_handler))
