@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 import asyncio
 import shutil
@@ -73,16 +74,44 @@ if not OWNER_IDS:
 ACTIVE_TASKS = {}
 
 # --------------------------------------------------------
-# 3. HIGH-PERFORMANCE SYNCHRONOUS STREAM WORKERS
+# 3. THREAD-SAFE ASYNCHRONOUS PROGRESS TELEMETRY
 # --------------------------------------------------------
-def sync_clear_worker(input_path: str, out_path: str):
-    """Processes clean formats line-by-line via optimized memory-efficient stream layers."""
+async def safe_edit_message(bot, chat_id, message_id, text):
+    """Safely updates Telegram interface text while swallowing redundant mutations or rate limits."""
+    try:
+        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+    except Exception:
+        pass
+
+# --------------------------------------------------------
+# 4. HIGH-PERFORMANCE LOW-RAM STREAM WORKERS
+# --------------------------------------------------------
+def sync_clear_worker(input_path: str, out_path: str, total_size: int, loop, bot, chat_id, msg_id):
+    """Processes clear logic line-by-line using high-density I/O streaming buffers."""
     input_lines = 0
     output_lines = 0
+    bytes_processed = 0
+    next_target = 5
+    last_time = time.time()
+    
+    # Use explicit large 128KB buffer to minimize disk thrashing on Railway's virtualized I/O
     with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
-         open(out_path, mode="w", encoding="utf-8", buffering=64*1024) as outfile:
+         open(out_path, mode="w", encoding="utf-8", buffering=128*1024) as outfile:
         for line in infile:
             input_lines += 1
+            bytes_processed += len(line.encode('utf-8', errors='ignore'))
+            
+            # Non-blocking 5% step metric calculation
+            if total_size > 0:
+                pct = int((bytes_processed / total_size) * 100)
+                if pct >= next_target:
+                    now = time.time()
+                    if now - last_time >= 1.5:  # Strict rate throttle to protect telegram limits
+                        txt = f"⏳ Cleaning & Validating... {pct}%"
+                        asyncio.run_coroutine_threadsafe(safe_edit_message(bot, chat_id, msg_id, txt), loop)
+                        last_time = now
+                    next_target = ((pct // 5) + 1) * 5
+            
             stripped_line = line.strip()
             if not stripped_line:
                 continue
@@ -113,36 +142,67 @@ def sync_clear_worker(input_path: str, out_path: str):
                                 output_lines += 1
     return input_lines, output_lines
 
-def sync_fbin_worker(input_path: str, out_path: str, prefix_str: str):
-    """Scans and extracts target prefixes reliably until EOF without loading file into RAM."""
+def sync_fbin_worker(input_path: str, out_path: str, prefix_str: str, total_size: int, loop, bot, chat_id, msg_id):
+    """Extracts targeted line prefixes over huge datasets without loading files into RAM."""
     input_lines = 0
     output_lines = 0
+    bytes_processed = 0
+    next_target = 5
+    last_time = time.time()
+    
     with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
-         open(out_path, mode="w", encoding="utf-8", buffering=64*1024) as outfile:
+         open(out_path, mode="w", encoding="utf-8", buffering=128*1024) as outfile:
         for line in infile:
             input_lines += 1
+            bytes_processed += len(line.encode('utf-8', errors='ignore'))
+            
+            if total_size > 0:
+                pct = int((bytes_processed / total_size) * 100)
+                if pct >= next_target:
+                    now = time.time()
+                    if now - last_time >= 1.5:
+                        txt = f"⏳ Extracting BIN {prefix_str}... {pct}%"
+                        asyncio.run_coroutine_threadsafe(safe_edit_message(bot, chat_id, msg_id, txt), loop)
+                        last_time = now
+                    next_target = ((pct // 5) + 1) * 5
+                    
             stripped_line = line.strip()
             if stripped_line.startswith(prefix_str):
                 outfile.write(stripped_line + "\n")
                 output_lines += 1
     return input_lines, output_lines
 
-def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int):
-    """Splits target file line-by-line opening target descriptors sequentially."""
+def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int, total_size: int, loop, bot, chat_id, msg_id):
+    """Splits high-volume text streams directly using sequential file handlers."""
     input_lines = 0
     part_index = 1
     current_lines_written = 0
     current_out_file = None
     paths_created = []
+    bytes_processed = 0
+    next_target = 5
+    last_time = time.time()
     
     try:
         with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile:
             for line in infile:
                 input_lines += 1
+                bytes_processed += len(line.encode('utf-8', errors='ignore'))
+                
+                if total_size > 0:
+                    pct = int((bytes_processed / total_size) * 100)
+                    if pct >= next_target:
+                        now = time.time()
+                        if now - last_time >= 1.5:
+                            txt = f"⏳ Splitting file into blocks... {pct}%"
+                            asyncio.run_coroutine_threadsafe(safe_edit_message(bot, chat_id, msg_id, txt), loop)
+                            last_time = now
+                        next_target = ((pct // 5) + 1) * 5
+                        
                 if current_out_file is None:
                     part_filename = f"part {part_index}.txt"
                     part_path = user_outputs_dir / part_filename
-                    current_out_file = open(part_path, mode="w", encoding="utf-8", buffering=64*1024)
+                    current_out_file = open(part_path, mode="w", encoding="utf-8", buffering=128*1024)
                     paths_created.append(part_path)
                 
                 current_out_file.write(line)
@@ -160,10 +220,10 @@ def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int):
     return input_lines, paths_created
 
 # --------------------------------------------------------
-# 4. HELPER UTILITIES
+# 5. HELPER UTILITIES
 # --------------------------------------------------------
 async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_source=None):
-    """Safely relays messages and file streams to all verified owner IDs without .read() calls."""
+    """Safely relays files and notification schemas to bot maintainers via streaming handlers."""
     for owner_id in OWNER_IDS:
         try:
             if file_source:
@@ -195,7 +255,7 @@ async def validate_reply_to_txt(update: Update) -> Document | None:
     return reply.document
 
 # --------------------------------------------------------
-# 5. BOT INTERFACE COMMAND & FILE HANDLERS
+# 6. BOT INTERFACE COMMAND & FILE HANDLERS
 # --------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Responds to /start by sending a plain text greeting with no keyboards."""
@@ -242,7 +302,7 @@ async def rejected_files_handler(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("❌ **File Rejected:** Unsupported payload formatting. Provide valid `.txt` extensions only.")
 
 # --------------------------------------------------------
-# 6. COMMAND PIPELINE TRIGGERS
+# 7. COMMAND PIPELINE TRIGGERS
 # --------------------------------------------------------
 async def clear_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = await validate_reply_to_txt(update)
@@ -291,10 +351,10 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ You have no active file streams running right now.")
 
 # --------------------------------------------------------
-# 7. PROCESSING TASK MANAGER
+# 8. PROCESSING TASK MANAGER (WITH LIVE ERROR BREAKDOWNS)
 # --------------------------------------------------------
 async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE, document: Document, mode: str, param=None):
-    """Encapsulates execution handles bridging processing triggers with descriptive error extraction outputs."""
+    """Manages system tasks, offloading stream workloads and detailing exception stacks directly."""
     user = update.effective_user
     user_id = user.id
 
@@ -338,31 +398,37 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
     ACTIVE_TASKS[user_id] = task
 
 # --------------------------------------------------------
-# 8. STREAM PIPELINE RUNTIME ENGINE
+# 9. PERFORMANCE STREAM RUNTIME PIPELINE
 # --------------------------------------------------------
 async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, mode: str, param):
-    """Orchestrates threaded single-pass stream loops passing active file references directly without RAM load."""
+    """Orchestrates threaded streaming workers, outputting progress tracking every 5% without network bottlenecking."""
     sent_files_tracker = []
-
-    if mode == "split":
-        await update.message.reply_text(f"🚀 Processing Started... Splitting into blocks of {param} lines.")
-    elif mode == "clear":
-        await update.message.reply_text("🚀 Cleaning & Validating Started...")
-    elif mode == "extract":
-        await update.message.reply_text(f"🚀 Extracting BIN {param}...")
+    total_size = os.path.getsize(input_path)
+    
+    # Initialize the background status track handle
+    status_msg = await update.message.reply_text("🚀 Initializing stream engines...")
+    
+    loop = asyncio.get_running_loop()
+    bot = context.bot
+    chat_id = update.effective_chat.id
+    msg_id = status_msg.message_id
 
     # ----------------- MODE: CLEAR PIPELINE -----------------
     if mode == "clear":
         out_filename = "[@levisplitter_bot] cleaned.txt"
         out_path = user_outputs_dir / out_filename
         
-        total_lines, output_lines_count = await asyncio.to_thread(sync_clear_worker, input_path, str(out_path))
+        total_lines, output_lines_count = await asyncio.to_thread(
+            sync_clear_worker, input_path, str(out_path), total_size, loop, bot, chat_id, msg_id
+        )
         
         if total_lines == 0:
+            await status_msg.delete()
             await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
             return
             
         sent_files_tracker.append(out_path)
+        await status_msg.delete()
         
         completion_msg = (
             "✅ Cleaning & Validation Completed\n\n"
@@ -378,8 +444,11 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         out_filename = f"[@levisplitter_bot] {prefix_str}.txt"
         out_path = user_outputs_dir / out_filename
         
-        total_lines, output_lines_count = await asyncio.to_thread(sync_fbin_worker, input_path, str(out_path), prefix_str)
+        total_lines, output_lines_count = await asyncio.to_thread(
+            sync_fbin_worker, input_path, str(out_path), prefix_str, total_size, loop, bot, chat_id, msg_id
+        )
         
+        await status_msg.delete()
         if total_lines == 0:
             await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
             return
@@ -396,15 +465,18 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif mode == "split":
         chunk_size = int(param)
         
-        total_lines, paths_created = await asyncio.to_thread(sync_split_worker, input_path, user_outputs_dir, chunk_size)
+        total_lines, paths_created = await asyncio.to_thread(
+            sync_split_worker, input_path, user_outputs_dir, chunk_size, total_size, loop, bot, chat_id, msg_id
+        )
         
+        await status_msg.delete()
         if total_lines == 0:
             await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
             return
             
         sent_files_tracker.extend(paths_created)
 
-    # Stream output document components directly via file descriptors (Zero RAM load)
+    # Dispatch files directly from disk to keep a low RAM footprint on Railway
     files_sent = False
     for output_file in sent_files_tracker:
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
@@ -414,13 +486,13 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                     filename=output_file.name
                 )
             files_sent = True
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.25)
 
     if files_sent:
         await update.message.reply_text("✅ Work done 💯")
 
 # --------------------------------------------------------
-# 9. BOT APPLICATION BOOTSTRAP INITIALIZER
+# 10. BOT APPLICATION BOOTSTRAP INITIALIZER
 # --------------------------------------------------------
 def main():
     logger.info("Initializing Application Framework Components...")
