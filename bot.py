@@ -342,8 +342,8 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif mode == "clear":
         progress_msg = (
-            "🚀 Cleaning Started...\n\n"
-            f"📄 Total Lines: {total_lines}"
+            "🚀 Cleaning & Validating Started...\n\n"
+            f"📄 Total Input Lines: {total_lines}"
         )
         await update.message.reply_text(progress_msg, reply_markup=MAIN_KEYBOARD)
 
@@ -371,9 +371,8 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if not stripped_line:
                     continue
                     
-                # Clean up any surrounding spaces on the splits
                 segments = [seg.strip() for seg in stripped_line.split("|")]
-                cleaned_output = stripped_line # Default fallback
+                card, mm, yy, cvv = None, None, None, None
                 
                 # Check Format 1 & 2: CARD|MM/YY|CVV|NAME...
                 if len(segments) >= 3 and "/" in segments[1]:
@@ -383,14 +382,29 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                         mm = date_parts[0].strip()
                         yy = date_parts[1].strip()
                         cvv = segments[2]
-                        cleaned_output = f"{card}|{mm}|{yy}|{cvv}"
                         
                 # Check Format 3 & 4: CARD|MM|YY|CVV|NAME...
                 elif len(segments) >= 4:
-                    cleaned_output = "|".join(segments[:4])
+                    card = segments[0]
+                    mm = segments[1]
+                    yy = segments[2]
+                    cvv = segments[3]
                     
-                await outfile.write(cleaned_output + "\n")
-                output_lines_count += 1
+                # STRICT VALIDATION CHECKS
+                if card and mm and yy and cvv:
+                    # 1. Card must be exactly 16 digits
+                    is_valid_card = card.isdigit() and len(card) == 16
+                    # 2. Month must be 01-12 (2 digits)
+                    is_valid_mm = mm.isdigit() and len(mm) == 2 and 1 <= int(mm) <= 12
+                    # 3. Year must be 2 or 4 digits
+                    is_valid_yy = yy.isdigit() and len(yy) in [2, 4]
+                    # 4. CVV must be exactly 3 digits
+                    is_valid_cvv = cvv.isdigit() and len(cvv) == 3
+                    
+                    if is_valid_card and is_valid_mm and is_valid_yy and is_valid_cvv:
+                        cleaned_output = f"{card}|{mm}|{yy}|{cvv}"
+                        await outfile.write(cleaned_output + "\n")
+                        output_lines_count += 1
                 
                 if line_counter % 2000 == 0:
                     await asyncio.sleep(0)
@@ -398,9 +412,10 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         sent_files_tracker.append(out_path)
         
         completion_msg = (
-            "✅ Cleaning Completed\n\n"
-            f"📄 Total Lines: {total_lines}\n"
-            f"📄 Output Lines: {output_lines_count}"
+            "✅ Cleaning & Validation Completed\n\n"
+            f"📄 Total Input Lines: {total_lines}\n"
+            f"📄 Valid Output Lines: {output_lines_count}\n"
+            f"🗑️ Invalid Lines Dropped: {total_lines - output_lines_count}"
         )
         await update.message.reply_text(completion_msg, reply_markup=MAIN_KEYBOARD)
 
@@ -468,12 +483,11 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             files_sent = True
             await asyncio.sleep(0.3)
         else:
-            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no data matching your parameters.", reply_markup=MAIN_KEYBOARD)
+            await update.message.reply_text(f"⚠️ Resulting file `{os.path.basename(output_file)}` contained no valid data matching your parameters.", reply_markup=MAIN_KEYBOARD)
 
     # Successful completion flag output
     if files_sent:
         await update.message.reply_text("Work done ✅ 💯", reply_markup=MAIN_KEYBOARD)
-
 # --------------------------------------------------------
 # 8. INCOMING FILE DISPATCH HANDLER
 # --------------------------------------------------------
