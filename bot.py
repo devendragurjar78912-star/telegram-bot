@@ -76,7 +76,7 @@ ACTIVE_TASKS = {}
 # 3. HIGH-PERFORMANCE SYNCHRONOUS STREAM WORKERS
 # --------------------------------------------------------
 def sync_clear_worker(input_path: str, out_path: str):
-    """Processes clean formats line-by-line via optimized C-level file streams."""
+    """Processes clean formats line-by-line via optimized memory-efficient stream layers."""
     input_lines = 0
     output_lines = 0
     with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
@@ -114,7 +114,7 @@ def sync_clear_worker(input_path: str, out_path: str):
     return input_lines, output_lines
 
 def sync_fbin_worker(input_path: str, out_path: str, prefix_str: str):
-    """Scans and extracts target prefixes reliably until EOF without internal leakage."""
+    """Scans and extracts target prefixes reliably until EOF without loading file into RAM."""
     input_lines = 0
     output_lines = 0
     with open(input_path, mode="r", encoding="utf-8", errors="ignore") as infile, \
@@ -128,7 +128,7 @@ def sync_fbin_worker(input_path: str, out_path: str, prefix_str: str):
     return input_lines, output_lines
 
 def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int):
-    """Splits target file line-by-line opening target descriptors on-the-fly."""
+    """Splits target file line-by-line opening target descriptors sequentially."""
     input_lines = 0
     part_index = 1
     current_lines_written = 0
@@ -163,19 +163,18 @@ def sync_split_worker(input_path: str, user_outputs_dir: Path, chunk_size: int):
 # 4. HELPER UTILITIES
 # --------------------------------------------------------
 async def send_to_owners(context: ContextTypes.DEFAULT_TYPE, caption: str, file_source=None):
-    """Safely relays messages and files to all verified owner IDs."""
+    """Safely relays messages and file streams to all verified owner IDs without .read() calls."""
     for owner_id in OWNER_IDS:
         try:
             if file_source:
                 if isinstance(file_source, str) and os.path.exists(file_source):
                     with open(file_source, "rb") as f:
-                        file_bytes = f.read()
-                    await context.bot.send_document(
-                        chat_id=owner_id,
-                        document=file_bytes,
-                        filename=os.path.basename(file_source),
-                        caption=caption
-                    )
+                        await context.bot.send_document(
+                            chat_id=owner_id,
+                            document=f,
+                            filename=os.path.basename(file_source),
+                            caption=caption
+                        )
                 else:
                     await context.bot.send_document(
                         chat_id=owner_id,
@@ -295,7 +294,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 7. PROCESSING TASK MANAGER
 # --------------------------------------------------------
 async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE, document: Document, mode: str, param=None):
-    """Encapsulates execution handles bridging standard processing triggers with the specified file."""
+    """Encapsulates execution handles bridging processing triggers with descriptive error extraction outputs."""
     user = update.effective_user
     user_id = user.id
 
@@ -324,9 +323,11 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
         except asyncio.CancelledError:
             logger.info(f"User {user_id} cancelled ongoing execution pipeline processing.")
             await update.message.reply_text("❌ **Operation Halted:** Processing loop explicitly broken by user command.")
-        except Exception as err:
-            logger.error(f"Execution tracking crash on user input {user_id}: {err}", exc_info=True)
-            await update.message.reply_text("⚠️ **System Error:** Failed to process your document. Ensure formatting rules match standard conventions.")
+        except Exception as e:
+            logger.exception(e)
+            await update.message.reply_text(
+                f"❌ {type(e).__name__}: {e}"
+            )
         finally:
             if user_id in ACTIVE_TASKS:
                 del ACTIVE_TASKS[user_id]
@@ -340,10 +341,9 @@ async def run_processing_task(update: Update, context: ContextTypes.DEFAULT_TYPE
 # 8. STREAM PIPELINE RUNTIME ENGINE
 # --------------------------------------------------------
 async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, input_path: str, user_outputs_dir: Path, mode: str, param):
-    """Orchestrates threaded single-pass text processing streams with real-time updates."""
+    """Orchestrates threaded single-pass stream loops passing active file references directly without RAM load."""
     sent_files_tracker = []
 
-    # Send mode-specific initialization triggers instantly (No multi-pass latency)
     if mode == "split":
         await update.message.reply_text(f"🚀 Processing Started... Splitting into blocks of {param} lines.")
     elif mode == "clear":
@@ -356,7 +356,6 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
         out_filename = "[@levisplitter_bot] cleaned.txt"
         out_path = user_outputs_dir / out_filename
         
-        # Offload streaming block directly to a background thread worker
         total_lines, output_lines_count = await asyncio.to_thread(sync_clear_worker, input_path, str(out_path))
         
         if total_lines == 0:
@@ -405,16 +404,15 @@ async def process_file_stream(update: Update, context: ContextTypes.DEFAULT_TYPE
             
         sent_files_tracker.extend(paths_created)
 
-    # Dispatch produced document arrays back to user streams
+    # Stream output document components directly via file descriptors (Zero RAM load)
     files_sent = False
     for output_file in sent_files_tracker:
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
             with open(output_file, "rb") as f:
-                output_bytes = f.read()
-            await update.message.reply_document(
-                document=output_bytes,
-                filename=os.path.basename(output_file)
-            )
+                await update.message.reply_document(
+                    document=f,
+                    filename=output_file.name
+                )
             files_sent = True
             await asyncio.sleep(0.2)
 
